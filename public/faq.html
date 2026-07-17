@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FAQ | Hebrew Podcast Highlight Editing</title>
+    <meta
+      name="description"
+      content="Answers about Hebrew transcription, diarization, human review, private job pages, and final MP3 production in Get To The Point."
+    />
+    <link rel="canonical" href="https://get-to-the-point-podcast-editor.vercel.app/faq" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Does the editor work with Hebrew podcast episodes?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The transcription stage is configured for Hebrew with WhisperX large-v3, and highlight reasons are written in Hebrew."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does the system automatically publish edited audio?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. The system creates a private output MP3 for the submitted job after a human approves the selected highlight segments."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Are private review pages indexed by search engines?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Job-specific review, audio, and output routes are served with noindex directives and are excluded from the sitemap."
+            }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="/">Get To The Point</a>
+        <div class="nav-links">
+          <a href="/how-it-works">How it works</a>
+          <a href="/faq">FAQ</a>
+          <a href="/review.html">Review app</a>
+        </div>
+      </nav>
+    </header>
+    <main>
+      <section class="section-inner">
+        <h1>Frequently asked questions</h1>
+        <article class="card">
+          <h2>Does the editor work with Hebrew podcast episodes?</h2>
+          <p>
+            Yes. The transcription stage uses WhisperX large-v3 with Hebrew language settings, and
+            the highlight-detection prompt requires Hebrew reasons for every candidate.
+          </p>
+        </article>
+        <article class="card">
+          <h2>Who decides what makes the final edit?</h2>
+          <p>
+            A human editor does. The system proposes candidates, but the final approve, reject,
+            reorder, and timing decisions happen in the review interface.
+          </p>
+        </article>
+        <article class="card">
+          <h2>What kind of database is used?</h2>
+          <p>
+            Supabase is the recommended free-tier product for production metadata and audio
+            artifacts because it provides Postgres and object storage in one managed service.
+          </p>
+        </article>
+        <article class="card">
+          <h2>Are private job pages indexed?</h2>
+          <p>
+            No. Review pages, source audio, and output audio are excluded from the sitemap and
+            served with noindex headers so public discovery focuses only on product pages.
+          </p>
+        </article>
+      </section>
+    </main>
+    <footer class="site-footer">Questions about Hebrew podcast editing and highlight workflows.</footer>
+  </body>
+</html>

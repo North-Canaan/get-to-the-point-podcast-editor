@@ -1,0 +1,38 @@
+[project]
+name = "get-to-the-point-podcast-editor"
+version = "0.1.0"
+description = "Hebrew-first podcast highlight editor with human review."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic>=0.117.0",
+  "fastapi>=0.117.1",
+  "feedparser>=6.0.11",
+  "httpx>=0.28.1",
+  "pydantic>=2.12.0",
+  "pydantic-settings>=2.10.1",
+  "python-multipart>=0.0.20",
+  "uvicorn[standard]>=0.35.0",
+  "yt-dlp>=2026.1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0",
+  "respx>=0.22.0",
+  "ruff>=0.14.0",
+]
+worker = [
+  "whisperx>=3.4.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.vercel]
+entrypoint = "podcast_editor.main:app"

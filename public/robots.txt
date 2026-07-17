@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /jobs/
+
+Sitemap: https://get-to-the-point-podcast-editor.vercel.app/sitemap.xml

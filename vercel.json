@@ -1,0 +1,28 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "podcast_editor/**/*.py": {
+      "excludeFiles": "{tests/**,data/**,supabase/**,scripts/**,**/__pycache__/**,**/*.pyc}"
+    }
+  },
+  "headers": [
+    {
+      "source": "/jobs/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+import json
+from pathlib import Path
+from uuid import UUID, uuid4
+
+from .cloud import SupabaseClient
+from .config import Settings, get_settings
+from .schemas import JobStatus, StatusRecord
+
+
+ARTIFACT_NAMES = {
+    "input": "input.json",
+    "audio16k": "audio16k.wav",
+    "transcript": "transcript.json",
+    "highlights": "highlights.json",
+    "review": "review.json",
+    "output": "output.mp3",
+    "status": "status.json",
+}
+
+
+def new_job_id() -> str:
+    return str(uuid4())
+
+
+def validate_job_id(job_id: str) -> str:
+    try:
+        return str(UUID(job_id))
+    except ValueError as exc:
+        raise ValueError("invalid job id") from exc
+
+
+class JobStore:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or get_settings()
+        self.cloud = SupabaseClient.from_settings(self.settings)
+
+    def job_dir(self, job_id: str) -> Path:
+        valid_id = validate_job_id(job_id)
+        path = self.settings.data_dir / valid_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def artifact_path(self, job_id: str, name: str) -> Path:
+        return self.job_dir(job_id) / ARTIFACT_NAMES[name]
+
+    def original_path(self, job_id: str) -> Path | None:
+        job_dir = self.job_dir(job_id)
+        matches = sorted(job_dir.glob("original.*"))
+        return matches[0] if matches else None
+
+    def temp_dir(self, job_id: str) -> Path:
+        path = self.job_dir(job_id) / "tmp"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def write_json(self, job_id: str, name: str, payload: dict) -> Path:
+        path = self.artifact_path(job_id, name)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        if self.cloud:
+            self.cloud.upload_artifact(
+                job_id,
+                ARTIFACT_NAMES[name],
+                path,
+                content_type="application/json; charset=utf-8",
+            )
+        return path
+
+    def read_json(self, job_id: str, name: str) -> dict | None:
+        path = self.artifact_path(job_id, name)
+        if not path.exists():
+            if self.cloud:
+                return self.cloud.download_json_artifact(job_id, ARTIFACT_NAMES[name])
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def set_status(
+        self, job_id: str, status: JobStatus, error: str | None = None
+    ) -> StatusRecord:
+        record = StatusRecord(job_id=job_id, status=status, error=error)
+        self.write_json(job_id, "status", record.model_dump())
+        if self.cloud:
+            self.cloud.upsert_job(job_id, status, error)
+        return record
+
+    def upload_media(self, job_id: str, path: Path, content_type: str) -> None:
+        if self.cloud:
+            self.cloud.upload_artifact(job_id, path.name, path, content_type)
+
+    def signed_media_url(self, job_id: str, filename: str) -> str | None:
+        if not self.cloud:
+            return None
+        return self.cloud.create_signed_url(f"{job_id}/{filename}")
+
+    def get_status(self, job_id: str) -> StatusRecord:
+        payload = self.read_json(job_id, "status")
+        if not payload:
+            return StatusRecord(job_id=job_id, status=JobStatus.queued)
+        return StatusRecord.model_validate(payload)

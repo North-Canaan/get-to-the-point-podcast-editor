@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Private Highlight Review | Get To The Point</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="toolbar" aria-labelledby="review-title">
+        <h1 id="review-title">Private Highlight Review</h1>
+        <form id="new-job-form">
+          <label for="episode-url">Podcast URL</label>
+          <input id="episode-url" name="episode-url" type="url" placeholder="https://..." />
+          <button class="button" type="submit">Create job</button>
+        </form>
+        <div>
+          <label for="job-id">Job ID</label>
+          <input id="job-id" name="job-id" placeholder="Paste a job id or use /jobs/{id}/review" />
+          <button class="button secondary" id="load-job" type="button">Load job</button>
+        </div>
+        <p class="status" id="status">No job loaded.</p>
+      </section>
+      <div class="audio-wrap">
+        <audio id="audio" controls preload="metadata"></audio>
+      </div>
+      <section class="role-bar" id="role-bar" aria-label="Speaker roles"></section>
+      <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates"></section>
+      <div class="actions">
+        <button class="button" id="produce" disabled type="button">Produce edit</button>
+        <a class="button secondary" id="output-link" hidden>Open output</a>
+      </div>
+    </main>
+    <script>
+      const state = {
+        jobId: "",
+        roles: {},
+        highlights: [],
+        decisions: new Map(),
+        stopTimer: null
+      };
+
+      const statusEl = document.querySelector("#status");
+      const roleBar = document.querySelector("#role-bar");
+      const list = document.querySelector("#highlight-list");
+      const audio = document.querySelector("#audio");
+      const produce = document.querySelector("#produce");
+      const outputLink = document.querySelector("#output-link");
+
+      const pathMatch = location.pathname.match(/\/jobs\/([^/]+)\/review/);
+      if (pathMatch) {
+        document.querySelector("#job-id").value = pathMatch[1];
+        loadJob(pathMatch[1]);
+      }
+
+      document.querySelector("#new-job-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const url = document.querySelector("#episode-url").value.trim();
+        if (!url) return;
+        setStatus("Creating job...");
+        const response = await fetch("/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url })
+        });
+        const payload = await response.json();
+        document.querySelector("#job-id").value = payload.job_id;
+        history.replaceState(null, "", `/jobs/${payload.job_id}/review`);
+        loadJob(payload.job_id);
+      });
+
+      document.querySelector("#load-job").addEventListener("click", () => {
+        const jobId = document.querySelector("#job-id").value.trim();
+        if (jobId) loadJob(jobId);
+      });
+
+      produce.addEventListener("click", async () => {
+        const approved = state.highlights
+          .filter((item) => state.decisions.get(item.id)?.decision === "approve")
+          .map((item) => {
+            const decision = state.decisions.get(item.id);
+            return { start: Number(decision.start), end: Number(decision.end) };
+          });
+        setStatus("Producing edit...");
+        const response = await fetch(`/jobs/${state.jobId}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ordered_segments: approved })
+        });
+        if (!response.ok) {
+          setStatus("Could not submit review.");
+          return;
+        }
+        outputLink.href = `/jobs/${state.jobId}/output`;
+        outputLink.hidden = false;
+        setStatus("Edit requested. Refresh state in a moment for completion.");
+      });
+
+      async function loadJob(jobId) {
+        state.jobId = jobId;
+        outputLink.hidden = true;
+        audio.src = `/jobs/${jobId}/audio`;
+        setStatus("Loading job state...");
+        const response = await fetch(`/jobs/${jobId}/state`);
+        if (!response.ok) {
+          setStatus("Job not found.");
+          return;
+        }
+        const payload = await response.json();
+        setStatus(`Status: ${payload.status}${payload.error ? " - " + payload.error : ""}`);
+        if (!payload.highlights) {
+          roleBar.innerHTML = "";
+          list.innerHTML = "";
+          return;
+        }
+        state.roles = payload.highlights.roles || {};
+        state.highlights = [...payload.highlights.highlights].sort((a, b) => b.score - a.score);
+        state.decisions.clear();
+        state.highlights.forEach((item) => {
+          state.decisions.set(item.id, {
+            decision: "",
+            start: item.start,
+            end: item.end
+          });
+        });
+        renderRoles();
+        renderHighlights();
+        syncProduce();
+      }
+
+      function renderRoles() {
+        roleBar.innerHTML = "";
+        Object.entries(state.roles).forEach(([speaker, role]) => {
+          const wrapper = document.createElement("label");
+          wrapper.className = "role-control";
+          wrapper.textContent = speaker;
+          const select = document.createElement("select");
+          ["host", "guest", "other"].forEach((value) => {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = value;
+            option.selected = value === role;
+            select.append(option);
+          });
+          select.addEventListener("change", () => {
+            state.roles[speaker] = select.value;
+            renderHighlights();
+          });
+          wrapper.append(select);
+          roleBar.append(wrapper);
+        });
+      }
+
+      function renderHighlights() {
+        list.innerHTML = "";
+        state.highlights.forEach((item) => {
+          const decision = state.decisions.get(item.id);
+          const row = document.createElement("article");
+          row.className = "highlight-row";
+          row.innerHTML = `
+            <div>
+              <div class="highlight-meta">
+                <span>${formatTime(item.start)}-${formatTime(item.end)}</span>
+                <span>${item.speaker} (${state.roles[item.speaker] || "other"})</span>
+                <span>Score ${item.score}</span>
+              </div>
+              <p class="reason">${escapeHtml(item.reason)}</p>
+              <p class="highlight-text">${escapeHtml(item.text || "")}</p>
+            </div>
+          `;
+          const actions = document.createElement("div");
+          actions.className = "row-actions";
+          const play = document.createElement("button");
+          play.className = "button secondary";
+          play.type = "button";
+          play.textContent = "Play";
+          play.addEventListener("click", () => playSegment(Number(decision.start), Number(decision.end)));
+
+          const toggles = document.createElement("div");
+          toggles.className = "toggle-group";
+          const approve = toggleButton("Approve", "approve", item.id);
+          const reject = toggleButton("Reject", "reject", item.id);
+          toggles.append(approve, reject);
+
+          const nudge = document.createElement("div");
+          nudge.className = "nudge";
+          const start = numberInput(decision.start, (value) => {
+            decision.start = value;
+          });
+          const end = numberInput(decision.end, (value) => {
+            decision.end = value;
+          });
+          nudge.append(start, end);
+          actions.append(play, toggles, nudge);
+          row.append(actions);
+          list.append(row);
+        });
+      }
+
+      function toggleButton(label, value, id) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.className = `${value} ${state.decisions.get(id).decision === value ? "active" : ""}`;
+        button.addEventListener("click", () => {
+          const current = state.decisions.get(id);
+          current.decision = current.decision === value ? "" : value;
+          renderHighlights();
+          syncProduce();
+        });
+        return button;
+      }
+
+      function numberInput(value, onChange) {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.1";
+        input.value = Number(value).toFixed(1);
+        input.addEventListener("change", () => onChange(input.value));
+        return input;
+      }
+
+      function playSegment(start, end) {
+        window.clearTimeout(state.stopTimer);
+        audio.currentTime = start;
+        audio.play();
+        state.stopTimer = window.setInterval(() => {
+          if (audio.currentTime >= end) {
+            audio.pause();
+            window.clearInterval(state.stopTimer);
+          }
+        }, 80);
+      }
+
+      function syncProduce() {
+        produce.disabled = ![...state.decisions.values()].some((item) => item.decision === "approve");
+      }
+
+      function setStatus(value) {
+        statusEl.textContent = value;
+      }
+
+      function formatTime(seconds) {
+        const total = Math.max(0, Math.floor(seconds));
+        const minutes = Math.floor(total / 60);
+        const rest = String(total % 60).padStart(2, "0");
+        return `${minutes}:${rest}`;
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char];
+        });
+      }
+    </script>
+  </body>
+</html>

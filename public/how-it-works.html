@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>How The Hebrew Podcast Highlight Pipeline Works | Get To The Point</title>
+    <meta
+      name="description"
+      content="Learn how Get To The Point ingests podcast URLs, transcribes Hebrew audio, detects guest-centered highlights, and splices approved MP3 segments."
+    />
+    <link rel="canonical" href="https://get-to-the-point-podcast-editor.vercel.app/how-it-works" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "HowTo",
+        "name": "How to create a Hebrew podcast highlight edit",
+        "description": "A five-stage workflow for turning a long Hebrew podcast interview into an approved MP3 highlight reel.",
+        "step": [
+          { "@type": "HowToStep", "name": "Submit a podcast URL" },
+          { "@type": "HowToStep", "name": "Transcribe and diarize Hebrew audio" },
+          { "@type": "HowToStep", "name": "Detect guest-focused highlights" },
+          { "@type": "HowToStep", "name": "Review and approve segments" },
+          { "@type": "HowToStep", "name": "Splice the final MP3" }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="/">Get To The Point</a>
+        <div class="nav-links">
+          <a href="/how-it-works">How it works</a>
+          <a href="/faq">FAQ</a>
+          <a href="/review.html">Review app</a>
+        </div>
+      </nav>
+    </header>
+    <main>
+      <section class="section-inner">
+        <h1>How the Hebrew podcast highlight editor works</h1>
+        <p>
+          The workflow is designed for long Hebrew interview podcasts where the final editorial
+          judgment belongs to a person. Automation prepares the options; the human chooses the cut.
+        </p>
+        <div class="steps">
+          <article class="step">
+            <div>
+              <h2>Ingest the episode</h2>
+              <p>
+                A URL can point to an RSS feed, an episode page, or direct audio. RSS feeds resolve
+                to the most recent enclosure, while other URLs are resolved through yt-dlp.
+              </p>
+            </div>
+          </article>
+          <article class="step">
+            <div>
+              <h2>Transcribe and diarize</h2>
+              <p>
+                The original audio is preserved, and a 16 kHz mono WAV is generated for WhisperX.
+                Pyannote diarization assigns speaker labels such as SPEAKER_00 and SPEAKER_01.
+              </p>
+            </div>
+          </article>
+          <article class="step">
+            <div>
+              <h2>Find highlight candidates</h2>
+              <p>
+                Claude reads the diarized Hebrew transcript, infers host and guest roles, and
+                proposes guest-centered highlights with Hebrew reasons and score values.
+              </p>
+            </div>
+          </article>
+          <article class="step">
+            <div>
+              <h2>Review the candidates</h2>
+              <p>
+                The editor plays each segment, corrects roles, approves or rejects suggestions, and
+                adjusts the start and end time of each approved highlight.
+              </p>
+            </div>
+          </article>
+          <article class="step">
+            <div>
+              <h2>Produce the MP3</h2>
+              <p>
+                ffmpeg cuts from the untouched original file, pads each approved segment, applies
+                short fades, and exports a final ordered MP3 highlight edit.
+              </p>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">Built for Hebrew-first audio editing workflows.</footer>
+  </body>
+</html>
