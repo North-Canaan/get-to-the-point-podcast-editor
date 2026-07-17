@@ -26,6 +26,9 @@ worker = [
   "whisperx>=3.4.2",
 ]
 
+[project.scripts]
+podcast-worker = "podcast_editor.worker:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

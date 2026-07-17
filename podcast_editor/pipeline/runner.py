@@ -17,9 +17,9 @@ def run_initial_pipeline(job_id: str, source_url: str) -> None:
         transcribe_and_diarize(job_id, store, settings)
         store.set_status(job_id, JobStatus.detecting_highlights)
         detect_highlights(job_id, store, settings)
-        store.set_status(job_id, JobStatus.needs_review)
+        store.set_status(job_id, JobStatus.needs_review, clear_lock=True)
     except Exception as exc:
-        store.set_status(job_id, JobStatus.error, error=str(exc))
+        store.set_status(job_id, JobStatus.error, error=str(exc), clear_lock=True)
 
 
 def run_splice_pipeline(job_id: str) -> None:
@@ -28,6 +28,6 @@ def run_splice_pipeline(job_id: str) -> None:
     try:
         store.set_status(job_id, JobStatus.splicing)
         splice(job_id, store)
-        store.set_status(job_id, JobStatus.done)
+        store.set_status(job_id, JobStatus.done, clear_lock=True)
     except Exception as exc:
-        store.set_status(job_id, JobStatus.error, error=str(exc))
+        store.set_status(job_id, JobStatus.error, error=str(exc), clear_lock=True)

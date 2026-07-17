@@ -107,9 +107,10 @@ def sitemap() -> FileResponse:
 @app.post("/jobs", response_model=CreateJobResponse)
 def create_job(request: CreateJobRequest, background_tasks: BackgroundTasks) -> CreateJobResponse:
     job_id = new_job_id()
-    store.set_status(job_id, JobStatus.queued)
+    store.set_status(job_id, JobStatus.queued, source_url=request.url)
     store.write_json(job_id, "input", {"source_url": request.url, "resolved_audio_url": None})
-    background_tasks.add_task(run_initial_pipeline, job_id, request.url)
+    if settings.run_inline_pipeline:
+        background_tasks.add_task(run_initial_pipeline, job_id, request.url)
     return CreateJobResponse(job_id=job_id)
 
 
@@ -167,7 +168,8 @@ def submit_review(
         raise HTTPException(status_code=404, detail="job not found") from None
     store.write_json(job_id, "review", review.model_dump())
     store.set_status(job_id, JobStatus.splicing)
-    background_tasks.add_task(run_splice_pipeline, job_id)
+    if settings.run_inline_pipeline:
+        background_tasks.add_task(run_splice_pipeline, job_id)
     return JSONResponse({"ok": True, "job_id": job_id})
 
 

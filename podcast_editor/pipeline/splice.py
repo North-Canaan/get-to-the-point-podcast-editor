@@ -13,7 +13,7 @@ def splice(job_id: str, store: JobStore) -> Path:
         raise RuntimeError("review.json is required before splicing")
     original = store.original_path(job_id)
     if not original:
-        raise RuntimeError("original audio is missing")
+        original = materialize_original_audio(job_id, store)
     duration = ffprobe_duration(original)
     temp_dir = store.temp_dir(job_id)
     clips = []
@@ -53,6 +53,17 @@ def splice(job_id: str, store: JobStore) -> Path:
     )
     store.upload_media(job_id, output, content_type="audio/mpeg")
     return output
+
+
+def materialize_original_audio(job_id: str, store: JobStore) -> Path:
+    input_payload = store.read_json(job_id, "input") or {}
+    filename = input_payload.get("original_filename")
+    if not filename:
+        raise RuntimeError("original audio is missing and input.json has no original filename")
+    target = store.job_dir(job_id) / filename
+    if store.download_media(job_id, filename, target):
+        return target
+    raise RuntimeError(f"original audio artifact is missing from storage: {filename}")
 
 
 def extract_clip(source: Path, target: Path, start: float, end: float) -> None:

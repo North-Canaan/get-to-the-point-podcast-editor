@@ -1,5 +1,6 @@
 create table if not exists public.jobs (
   id uuid primary key,
+  source_url text,
   status text not null check (
     status in (
       'queued',
@@ -13,9 +14,18 @@ create table if not exists public.jobs (
     )
   ),
   error text,
+  worker_id text,
+  locked_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.jobs add column if not exists source_url text;
+alter table public.jobs add column if not exists worker_id text;
+alter table public.jobs add column if not exists locked_at timestamptz;
+
+create index if not exists jobs_available_idx
+on public.jobs (status, worker_id, created_at);
 
 create or replace function public.set_updated_at()
 returns trigger

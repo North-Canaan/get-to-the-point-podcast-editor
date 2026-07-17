@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     app_base_url: str = "http://localhost:8000"
     data_dir: Path = Path("data")
     state_backend: str = "filesystem"
+    run_inline_pipeline: bool | None = None
+    worker_poll_seconds: float = 10.0
 
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-5"
@@ -30,5 +32,7 @@ def get_settings() -> Settings:
     settings = Settings()
     if os.getenv("VERCEL") and settings.data_dir == Path("data"):
         settings.data_dir = Path("/tmp/podcast-editor-data")
+    if settings.run_inline_pipeline is None:
+        settings.run_inline_pipeline = not bool(os.getenv("VERCEL"))
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     return settings
