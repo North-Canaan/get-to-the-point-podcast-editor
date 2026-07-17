@@ -64,6 +64,9 @@
             setStatus(`ffmpeg progress ${(progress * 100).toFixed(1)}%, time ${time}`);
           });
 
+          const classWorkerURL = await moduleWorkerBlobURL(
+            "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js"
+          );
           const coreURL = await toBlobURL(
             "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
             "text/javascript"
@@ -72,7 +75,7 @@
             "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
             "application/wasm"
           );
-          await ffmpeg.load({ coreURL, wasmURL });
+          await ffmpeg.load({ classWorkerURL, coreURL, wasmURL });
           appendLog("ffmpeg.wasm loaded.");
 
           setStatus("Fetching source audio into browser memory...");
@@ -185,6 +188,16 @@
       function formatBytes(value) {
         if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)}KB`;
         return `${(value / (1024 * 1024)).toFixed(1)}MB`;
+      }
+
+      async function moduleWorkerBlobURL(url) {
+        const response = await fetch(url, { mode: "cors" });
+        if (!response.ok) {
+          throw new Error(`Worker fetch failed: ${response.status} ${response.statusText}`);
+        }
+        const base = url.slice(0, url.lastIndexOf("/") + 1);
+        const source = (await response.text()).replaceAll('from "./', `from "${base}`);
+        return URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
       }
     </script>
   </body>
