@@ -19,10 +19,10 @@
           id="fixture"
           style="width: 100%; min-height: 190px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace"
         >{
-  "audio_url": "https://example.com/episode.mp3",
+  "audio_url": "https://sbs-podcast.streamguys1.com/sbs-hebrew/20260711200112-hebrew-2268ba9a-7045-4cb3-9b8f-dc30d9bcee21.mp3?awCollectionId=sbs-hebrew&awGenre=News&awEpisodeId=0000019f-3f43-d538-a7df-7f7b4d530000&dur_cat=3",
   "ordered_segments": [
-    { "start": 10, "end": 40 },
-    { "start": 60, "end": 95 }
+    { "start": 5, "end": 25 },
+    { "start": 60, "end": 85 }
   ]
 }</textarea>
         <div class="actions">
@@ -49,80 +49,101 @@
       const FADE_SECONDS = 0.02;
 
       runButton.addEventListener("click", async () => {
-        download.hidden = true;
-        const fixture = JSON.parse(document.querySelector("#fixture").value);
-        const started = performance.now();
-        setStatus("Loading ffmpeg.wasm...");
+        try {
+          runButton.disabled = true;
+          download.hidden = true;
+          log.textContent = "";
+          const fixture = JSON.parse(document.querySelector("#fixture").value);
+          const started = performance.now();
+          setStatus("Loading ffmpeg.wasm...");
+          appendLog("Starting spike. First run downloads about 30MB of wasm plus the source MP3.");
 
-        const ffmpeg = new FFmpeg();
-        ffmpeg.on("log", ({ message }) => appendLog(message));
-        ffmpeg.on("progress", ({ progress, time }) => {
-          setStatus(`ffmpeg progress ${(progress * 100).toFixed(1)}%, time ${time}`);
-        });
+          const ffmpeg = new FFmpeg();
+          ffmpeg.on("log", ({ message }) => appendLog(message));
+          ffmpeg.on("progress", ({ progress, time }) => {
+            setStatus(`ffmpeg progress ${(progress * 100).toFixed(1)}%, time ${time}`);
+          });
 
-        const coreURL = await toBlobURL(
-          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
-          "text/javascript"
-        );
-        const wasmURL = await toBlobURL(
-          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
-          "application/wasm"
-        );
-        await ffmpeg.load({ coreURL, wasmURL });
+          const coreURL = await toBlobURL(
+            "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+            "text/javascript"
+          );
+          const wasmURL = await toBlobURL(
+            "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
+            "application/wasm"
+          );
+          await ffmpeg.load({ coreURL, wasmURL });
+          appendLog("ffmpeg.wasm loaded.");
 
-        setStatus("Fetching source audio into browser memory...");
-        await ffmpeg.writeFile("input.mp3", await fetchFile(fixture.audio_url));
+          setStatus("Fetching source audio into browser memory...");
+          const audioBytes = await fetchWithProgress(fixture.audio_url, (loaded, total) => {
+            const label = total
+              ? `${formatBytes(loaded)} / ${formatBytes(total)} (${((loaded / total) * 100).toFixed(1)}%)`
+              : `${formatBytes(loaded)}`;
+            setStatus(`Downloading source audio: ${label}`);
+          });
+          appendLog(`Downloaded source audio: ${formatBytes(audioBytes.byteLength)}.`);
+          await ffmpeg.writeFile("input.mp3", audioBytes);
 
-        const clipNames = [];
-        for (const [index, segment] of fixture.ordered_segments.entries()) {
-          const start = Math.max(0, Number(segment.start) - PADDING_SECONDS);
-          const end = Number(segment.end) + PADDING_SECONDS;
-          const duration = Math.max(0, end - start);
-          const fadeOutStart = Math.max(0, duration - FADE_SECONDS);
-          const name = `clip_${String(index).padStart(3, "0")}.mp3`;
-          clipNames.push(name);
-          setStatus(`Extracting clip ${index + 1}/${fixture.ordered_segments.length}...`);
+          const clipNames = [];
+          for (const [index, segment] of fixture.ordered_segments.entries()) {
+            const start = Math.max(0, Number(segment.start) - PADDING_SECONDS);
+            const end = Number(segment.end) + PADDING_SECONDS;
+            const duration = Math.max(0, end - start);
+            const fadeOutStart = Math.max(0, duration - FADE_SECONDS);
+            const name = `clip_${String(index).padStart(3, "0")}.mp3`;
+            clipNames.push(name);
+            setStatus(`Extracting clip ${index + 1}/${fixture.ordered_segments.length}...`);
+            appendLog(`Extracting ${name}: ${start.toFixed(1)}s to ${end.toFixed(1)}s.`);
+            await ffmpeg.exec([
+              "-ss",
+              start.toFixed(3),
+              "-to",
+              end.toFixed(3),
+              "-i",
+              "input.mp3",
+              "-af",
+              `afade=t=in:st=0:d=${FADE_SECONDS},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${FADE_SECONDS}`,
+              "-c:a",
+              "libmp3lame",
+              "-b:a",
+              "128k",
+              name
+            ]);
+          }
+
+          await ffmpeg.writeFile(
+            "concat.txt",
+            new TextEncoder().encode(clipNames.map((name) => `file '${name}'`).join("\n") + "\n")
+          );
+          setStatus("Concatenating output...");
           await ffmpeg.exec([
-            "-ss",
-            start.toFixed(3),
-            "-to",
-            end.toFixed(3),
+            "-f",
+            "concat",
+            "-safe",
+            "0",
             "-i",
-            "input.mp3",
-            "-af",
-            `afade=t=in:st=0:d=${FADE_SECONDS},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${FADE_SECONDS}`,
+            "concat.txt",
             "-c:a",
             "libmp3lame",
             "-b:a",
             "128k",
-            name
+            "output.mp3"
           ]);
+
+          const data = await ffmpeg.readFile("output.mp3");
+          const blob = new Blob([data.buffer], { type: "audio/mpeg" });
+          download.href = URL.createObjectURL(blob);
+          download.hidden = false;
+          appendLog(`Output size: ${formatBytes(blob.size)}.`);
+          setStatus(`Done in ${((performance.now() - started) / 1000).toFixed(1)}s.`);
+        } catch (error) {
+          console.error(error);
+          appendLog(`ERROR: ${error && error.stack ? error.stack : error}`);
+          setStatus("Failed. See log below.");
+        } finally {
+          runButton.disabled = false;
         }
-
-        await ffmpeg.writeFile(
-          "concat.txt",
-          new TextEncoder().encode(clipNames.map((name) => `file '${name}'`).join("\n") + "\n")
-        );
-        setStatus("Concatenating output...");
-        await ffmpeg.exec([
-          "-f",
-          "concat",
-          "-safe",
-          "0",
-          "-i",
-          "concat.txt",
-          "-c:a",
-          "libmp3lame",
-          "-b:a",
-          "128k",
-          "output.mp3"
-        ]);
-
-        const data = await ffmpeg.readFile("output.mp3");
-        const blob = new Blob([data.buffer], { type: "audio/mpeg" });
-        download.href = URL.createObjectURL(blob);
-        download.hidden = false;
-        setStatus(`Done in ${((performance.now() - started) / 1000).toFixed(1)}s.`);
       });
 
       function setStatus(value) {
@@ -131,6 +152,39 @@
 
       function appendLog(value) {
         log.textContent += `${value}\n`;
+      }
+
+      async function fetchWithProgress(url, onProgress) {
+        const response = await fetch(url, { mode: "cors" });
+        if (!response.ok) {
+          throw new Error(`Audio fetch failed: ${response.status} ${response.statusText}`);
+        }
+        if (!response.body) {
+          return await fetchFile(url);
+        }
+        const total = Number(response.headers.get("content-length") || 0);
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.byteLength;
+          onProgress(loaded, total);
+        }
+        const output = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+          output.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return output;
+      }
+
+      function formatBytes(value) {
+        if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)}KB`;
+        return `${(value / (1024 * 1024)).toFixed(1)}MB`;
       }
     </script>
   </body>
