@@ -44,10 +44,13 @@ class SupabaseClient:
         error: str | None = None,
         source_url: str | None = None,
         clear_lock: bool = False,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         payload = {"id": job_id, "status": status.value, "error": error}
         if source_url is not None:
             payload["source_url"] = source_url
+        if extra:
+            payload.update(extra)
         if clear_lock:
             payload["worker_id"] = None
             payload["locked_at"] = None
@@ -61,6 +64,26 @@ class SupabaseClient:
                 f"{self.url}/rest/v1/jobs?on_conflict=id", headers=headers, json=payload
             )
             response.raise_for_status()
+
+    def update_job_fields(self, job_id: str, fields: dict[str, Any]) -> None:
+        headers = {**self.headers, "Content-Type": "application/json"}
+        with httpx.Client(timeout=20.0) as client:
+            response = client.patch(
+                f"{self.url}/rest/v1/jobs?id=eq.{job_id}",
+                headers=headers,
+                json=fields,
+            )
+            response.raise_for_status()
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(
+                f"{self.url}/rest/v1/jobs?id=eq.{job_id}&select=*",
+                headers=self.headers,
+            )
+            response.raise_for_status()
+            rows = response.json()
+            return rows[0] if rows else None
 
     def claim_job(
         self,

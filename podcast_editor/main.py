@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .jobs import JobStore, new_job_id, validate_job_id
-from .pipeline.runner import run_initial_pipeline, run_splice_pipeline
+from .pipeline.no_worker import advance_no_worker_job, submit_no_worker_job
 from .schemas import (
     CreateJobRequest,
     CreateJobResponse,
@@ -57,7 +57,7 @@ INDEX_FALLBACK_HTML = """<!doctype html>
         </div>
         <div class="waveform" aria-label="Audio editing waveform illustration"><div class="wave-bars" aria-hidden="true"><span style="height:34%"></span><span style="height:62%"></span><span style="height:88%"></span><span style="height:52%"></span><span style="height:74%"></span><span style="height:42%"></span><span style="height:96%"></span><span style="height:58%"></span><span style="height:46%"></span><span style="height:82%"></span><span style="height:66%"></span><span style="height:36%"></span></div></div>
       </section>
-      <section><div class="section-inner"><h2>Built for Hebrew interviews</h2><div class="grid"><article class="card"><h3>Hebrew transcription</h3><p>WhisperX runs with the large-v3 model and Hebrew language settings, then aligns text to timestamps for accurate review and editing.</p></article><article class="card"><h3>Speaker-aware highlights</h3><p>Diarization keeps speakers separate, and Claude infers host and guest roles from conversational behavior rather than hardcoded labels.</p></article><article class="card"><h3>Human approval</h3><p>The editor can approve, reject, reorder, and tighten highlight boundaries before the final MP3 is produced from the original audio.</p></article></div></div></section>
+      <section><div class="section-inner"><h2>Built for Hebrew interviews</h2><div class="grid"><article class="card"><h3>Hebrew transcription</h3><p>AssemblyAI produces Hebrew transcripts with speaker diarization and timestamps for accurate review and editing.</p></article><article class="card"><h3>Speaker-aware highlights</h3><p>Diarization keeps speakers separate, and Claude infers host and guest roles from conversational behavior rather than hardcoded labels.</p></article><article class="card"><h3>Human approval</h3><p>The editor can approve, reject, reorder, and tighten highlight boundaries before the final MP3 is produced in the browser.</p></article></div></div></section>
     </main>
     <footer class="site-footer">Podcast editing software for Hebrew interview workflows.</footer>
   </body>
@@ -105,12 +105,13 @@ def sitemap() -> FileResponse:
 
 
 @app.post("/jobs", response_model=CreateJobResponse)
-def create_job(request: CreateJobRequest, background_tasks: BackgroundTasks) -> CreateJobResponse:
+def create_job(request: CreateJobRequest) -> CreateJobResponse:
     job_id = new_job_id()
     store.set_status(job_id, JobStatus.queued, source_url=request.url)
-    store.write_json(job_id, "input", {"source_url": request.url, "resolved_audio_url": None})
-    if settings.run_inline_pipeline:
-        background_tasks.add_task(run_initial_pipeline, job_id, request.url)
+    try:
+        submit_no_worker_job(job_id, request.url, store, settings)
+    except Exception as exc:
+        store.set_status(job_id, JobStatus.error, error=str(exc), source_url=request.url)
     return CreateJobResponse(job_id=job_id)
 
 
@@ -121,6 +122,7 @@ def job_state(job_id: str) -> StateResponse:
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
 
+    advance_no_worker_job(job_id, store, settings)
     status = store.get_status(job_id)
     transcript = store.read_json(job_id, "transcript")
     highlights = store.read_json(job_id, "highlights")
@@ -154,22 +156,36 @@ def job_audio(job_id: str, request: Request) -> Response:
             signed_url = store.signed_media_url(job_id, filename)
             if signed_url:
                 return RedirectResponse(signed_url)
+        resolved_url = input_payload.get("resolved_audio_url")
+        if resolved_url:
+            response = RedirectResponse(str(resolved_url))
+            response.headers["X-Robots-Tag"] = "noindex, nofollow"
+            return response
         raise HTTPException(status_code=404, detail="audio not found")
     return ranged_file_response(original, request)
 
 
 @app.post("/jobs/{job_id}/review")
-def submit_review(
-    job_id: str, review: ReviewRequest, background_tasks: BackgroundTasks
-) -> JSONResponse:
+def submit_review(job_id: str, review: ReviewRequest) -> JSONResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
     store.write_json(job_id, "review", review.model_dump())
     store.set_status(job_id, JobStatus.splicing)
-    if settings.run_inline_pipeline:
-        background_tasks.add_task(run_splice_pipeline, job_id)
+    return JSONResponse({"ok": True, "job_id": job_id})
+
+
+@app.post("/jobs/{job_id}/output")
+async def upload_output(job_id: str, file: UploadFile = File(...)) -> JSONResponse:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    output = store.artifact_path(job_id, "output")
+    output.write_bytes(await file.read())
+    store.upload_media(job_id, output, content_type="audio/mpeg")
+    store.set_status(job_id, JobStatus.done, extra={"output_storage_path": f"{job_id}/output.mp3"})
     return JSONResponse({"ok": True, "job_id": job_id})
 
 

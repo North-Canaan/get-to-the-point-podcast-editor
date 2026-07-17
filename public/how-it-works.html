@@ -58,8 +58,8 @@
             <div>
               <h2>Transcribe and diarize</h2>
               <p>
-                The original audio is preserved, and a 16 kHz mono WAV is generated for WhisperX.
-                Pyannote diarization assigns speaker labels such as SPEAKER_00 and SPEAKER_01.
+                The resolved audio URL is submitted to AssemblyAI for Hebrew transcription,
+                diarization, and timestamped speaker-turn segments.
               </p>
             </div>
           </article>
@@ -85,8 +85,8 @@
             <div>
               <h2>Produce the MP3</h2>
               <p>
-                ffmpeg cuts from the untouched original file, pads each approved segment, applies
-                short fades, and exports a final ordered MP3 highlight edit.
+                The review page loads ffmpeg.wasm in the browser, pads each approved segment,
+                applies short fades, and exports a final ordered MP3 highlight edit.
               </p>
             </div>
           </article>

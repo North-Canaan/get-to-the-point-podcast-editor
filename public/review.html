@@ -32,14 +32,19 @@
         <button class="button" id="produce" disabled type="button">Produce edit</button>
         <a class="button secondary" id="output-link" hidden>Open output</a>
       </div>
+      <pre id="produce-log" style="white-space: pre-wrap"></pre>
     </main>
-    <script>
+    <script type="module">
+      import { FFmpeg } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
+      import { toBlobURL } from "https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js";
+
       const state = {
         jobId: "",
         roles: {},
         highlights: [],
         decisions: new Map(),
-        stopTimer: null
+        stopTimer: null,
+        pollTimer: null
       };
 
       const statusEl = document.querySelector("#status");
@@ -48,6 +53,9 @@
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
       const outputLink = document.querySelector("#output-link");
+      const produceLog = document.querySelector("#produce-log");
+      const PADDING_SECONDS = 0.3;
+      const FADE_SECONDS = 0.02;
 
       const pathMatch = location.pathname.match(/\/jobs\/([^/]+)\/review/);
       if (pathMatch) {
@@ -77,29 +85,53 @@
       });
 
       produce.addEventListener("click", async () => {
-        const approved = state.highlights
-          .filter((item) => state.decisions.get(item.id)?.decision === "approve")
-          .map((item) => {
-            const decision = state.decisions.get(item.id);
-            return { start: Number(decision.start), end: Number(decision.end) };
+        try {
+          produce.disabled = true;
+          produceLog.textContent = "";
+          const approved = state.highlights
+            .filter((item) => state.decisions.get(item.id)?.decision === "approve")
+            .map((item) => {
+              const decision = state.decisions.get(item.id);
+              return { start: Number(decision.start), end: Number(decision.end) };
+            });
+          setStatus("Saving review decisions...");
+          const response = await fetch(`/jobs/${state.jobId}/review`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ordered_segments: approved })
           });
-        setStatus("Producing edit...");
-        const response = await fetch(`/jobs/${state.jobId}/review`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ordered_segments: approved })
-        });
-        if (!response.ok) {
-          setStatus("Could not submit review.");
-          return;
+          if (!response.ok) {
+            setStatus("Could not submit review.");
+            syncProduce();
+            return;
+          }
+          setStatus("Producing edit in this browser...");
+          const blob = await spliceInBrowser(`/jobs/${state.jobId}/audio`, approved);
+          setStatus("Uploading output...");
+          const form = new FormData();
+          form.append("file", blob, "output.mp3");
+          const upload = await fetch(`/jobs/${state.jobId}/output`, {
+            method: "POST",
+            body: form
+          });
+          if (!upload.ok) {
+            throw new Error(`Output upload failed: ${upload.status}`);
+          }
+          outputLink.href = `/jobs/${state.jobId}/output`;
+          outputLink.hidden = false;
+          setStatus("Done. Output is ready.");
+        } catch (error) {
+          console.error(error);
+          appendProduceLog(`ERROR: ${error && error.stack ? error.stack : error}`);
+          setStatus("Produce failed. See log below.");
+        } finally {
+          syncProduce();
         }
-        outputLink.href = `/jobs/${state.jobId}/output`;
-        outputLink.hidden = false;
-        setStatus("Edit requested. Refresh state in a moment for completion.");
       });
 
       async function loadJob(jobId) {
         state.jobId = jobId;
+        window.clearTimeout(state.pollTimer);
         outputLink.hidden = true;
         audio.src = `/jobs/${jobId}/audio`;
         setStatus("Loading job state...");
@@ -110,6 +142,9 @@
         }
         const payload = await response.json();
         setStatus(`Status: ${payload.status}${payload.error ? " - " + payload.error : ""}`);
+        if (["queued", "transcribing", "detecting_highlights"].includes(payload.status)) {
+          state.pollTimer = window.setTimeout(() => loadJob(jobId), 10000);
+        }
         if (!payload.highlights) {
           roleBar.innerHTML = "";
           list.innerHTML = "";
@@ -253,6 +288,131 @@
         return String(value).replace(/[&<>"']/g, (char) => {
           return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char];
         });
+      }
+
+      async function spliceInBrowser(audioUrl, orderedSegments) {
+        appendProduceLog("Loading ffmpeg.wasm...");
+        const ffmpeg = new FFmpeg();
+        ffmpeg.on("log", ({ message }) => appendProduceLog(message));
+        ffmpeg.on("progress", ({ progress }) => {
+          setStatus(`ffmpeg progress ${(progress * 100).toFixed(1)}%`);
+        });
+
+        const classWorkerURL = await moduleWorkerBlobURL(
+          "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js"
+        );
+        const coreURL = await toBlobURL(
+          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+          "text/javascript"
+        );
+        const wasmURL = await toBlobURL(
+          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
+          "application/wasm"
+        );
+        await ffmpeg.load({ classWorkerURL, coreURL, wasmURL });
+
+        appendProduceLog("Downloading source audio...");
+        const audioBytes = await fetchWithProgress(audioUrl, (loaded, total) => {
+          const label = total
+            ? `${formatBytes(loaded)} / ${formatBytes(total)}`
+            : `${formatBytes(loaded)}`;
+          setStatus(`Downloading source audio: ${label}`);
+        });
+        await ffmpeg.writeFile("input.mp3", audioBytes);
+
+        const clipNames = [];
+        for (const [index, segment] of orderedSegments.entries()) {
+          const start = Math.max(0, Number(segment.start) - PADDING_SECONDS);
+          const end = Number(segment.end) + PADDING_SECONDS;
+          const duration = Math.max(0, end - start);
+          const fadeOutStart = Math.max(0, duration - FADE_SECONDS);
+          const name = `clip_${String(index).padStart(3, "0")}.mp3`;
+          clipNames.push(name);
+          setStatus(`Extracting clip ${index + 1}/${orderedSegments.length}...`);
+          await ffmpeg.exec([
+            "-ss",
+            start.toFixed(3),
+            "-to",
+            end.toFixed(3),
+            "-i",
+            "input.mp3",
+            "-af",
+            `afade=t=in:st=0:d=${FADE_SECONDS},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${FADE_SECONDS}`,
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "128k",
+            name
+          ]);
+        }
+
+        await ffmpeg.writeFile(
+          "concat.txt",
+          new TextEncoder().encode(clipNames.map((name) => `file '${name}'`).join("\n") + "\n")
+        );
+        setStatus("Concatenating output...");
+        await ffmpeg.exec([
+          "-f",
+          "concat",
+          "-safe",
+          "0",
+          "-i",
+          "concat.txt",
+          "-c:a",
+          "libmp3lame",
+          "-b:a",
+          "128k",
+          "output.mp3"
+        ]);
+        const data = await ffmpeg.readFile("output.mp3");
+        return new Blob([data.buffer], { type: "audio/mpeg" });
+      }
+
+      async function fetchWithProgress(url, onProgress) {
+        const response = await fetch(url, { mode: "cors" });
+        if (!response.ok) {
+          throw new Error(`Audio fetch failed: ${response.status} ${response.statusText}`);
+        }
+        if (!response.body) {
+          return new Uint8Array(await response.arrayBuffer());
+        }
+        const total = Number(response.headers.get("content-length") || 0);
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.byteLength;
+          onProgress(loaded, total);
+        }
+        const output = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+          output.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return output;
+      }
+
+      async function moduleWorkerBlobURL(url) {
+        const response = await fetch(url, { mode: "cors" });
+        if (!response.ok) {
+          throw new Error(`Worker fetch failed: ${response.status} ${response.statusText}`);
+        }
+        const base = url.slice(0, url.lastIndexOf("/") + 1);
+        const source = (await response.text()).replaceAll('from "./', `from "${base}`);
+        return URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+      }
+
+      function appendProduceLog(value) {
+        produceLog.textContent += `${value}\n`;
+      }
+
+      function formatBytes(value) {
+        if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)}KB`;
+        return `${(value / (1024 * 1024)).toFixed(1)}MB`;
       }
     </script>
   </body>

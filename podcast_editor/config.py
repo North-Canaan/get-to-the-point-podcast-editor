@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-5"
+    assemblyai_api_key: str | None = None
 
     hf_token: str | None = None
     whisper_model: str = "large-v3"

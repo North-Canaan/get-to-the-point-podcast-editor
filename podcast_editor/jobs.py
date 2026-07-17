@@ -80,11 +80,19 @@ class JobStore:
         error: str | None = None,
         source_url: str | None = None,
         clear_lock: bool = False,
+        extra: dict | None = None,
     ) -> StatusRecord:
         record = StatusRecord(job_id=job_id, status=status, error=error)
         self.write_json(job_id, "status", record.model_dump())
         if self.cloud:
-            self.cloud.upsert_job(job_id, status, error, source_url=source_url, clear_lock=clear_lock)
+            self.cloud.upsert_job(
+                job_id,
+                status,
+                error,
+                source_url=source_url,
+                clear_lock=clear_lock,
+                extra=extra,
+            )
         return record
 
     def upload_media(self, job_id: str, path: Path, content_type: str) -> None:
@@ -100,6 +108,15 @@ class JobStore:
         if not self.cloud:
             return False
         return self.cloud.download_artifact_to_file(job_id, filename, target)
+
+    def update_job_fields(self, job_id: str, fields: dict) -> None:
+        if self.cloud:
+            self.cloud.update_job_fields(job_id, fields)
+
+    def get_job_record(self, job_id: str) -> dict | None:
+        if not self.cloud:
+            return None
+        return self.cloud.get_job(job_id)
 
     def get_status(self, job_id: str) -> StatusRecord:
         payload = self.read_json(job_id, "status")
