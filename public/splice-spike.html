@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Browser Splice Spike</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="toolbar">
+        <h1>Browser Splice Spike</h1>
+        <p class="status">
+          Paste a fixture with an audio URL and ordered segments. This tests whether ffmpeg.wasm can
+          splice the episode in the browser without a server-side worker.
+        </p>
+        <textarea
+          id="fixture"
+          style="width: 100%; min-height: 190px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace"
+        >{
+  "audio_url": "https://example.com/episode.mp3",
+  "ordered_segments": [
+    { "start": 10, "end": 40 },
+    { "start": 60, "end": 95 }
+  ]
+}</textarea>
+        <div class="actions">
+          <button class="button" id="run" type="button">Run browser splice</button>
+          <a class="button secondary" id="download" hidden download="spike-output.mp3">Download MP3</a>
+        </div>
+        <p class="status" id="status">Idle.</p>
+      </section>
+      <section class="section-inner">
+        <h2>Log</h2>
+        <pre id="log" style="white-space: pre-wrap"></pre>
+      </section>
+    </main>
+    <script type="module">
+      import { FFmpeg } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
+      import { fetchFile, toBlobURL } from "https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js";
+
+      const runButton = document.querySelector("#run");
+      const download = document.querySelector("#download");
+      const status = document.querySelector("#status");
+      const log = document.querySelector("#log");
+
+      const PADDING_SECONDS = 0.3;
+      const FADE_SECONDS = 0.02;
+
+      runButton.addEventListener("click", async () => {
+        download.hidden = true;
+        const fixture = JSON.parse(document.querySelector("#fixture").value);
+        const started = performance.now();
+        setStatus("Loading ffmpeg.wasm...");
+
+        const ffmpeg = new FFmpeg();
+        ffmpeg.on("log", ({ message }) => appendLog(message));
+        ffmpeg.on("progress", ({ progress, time }) => {
+          setStatus(`ffmpeg progress ${(progress * 100).toFixed(1)}%, time ${time}`);
+        });
+
+        const coreURL = await toBlobURL(
+          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+          "text/javascript"
+        );
+        const wasmURL = await toBlobURL(
+          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
+          "application/wasm"
+        );
+        await ffmpeg.load({ coreURL, wasmURL });
+
+        setStatus("Fetching source audio into browser memory...");
+        await ffmpeg.writeFile("input.mp3", await fetchFile(fixture.audio_url));
+
+        const clipNames = [];
+        for (const [index, segment] of fixture.ordered_segments.entries()) {
+          const start = Math.max(0, Number(segment.start) - PADDING_SECONDS);
+          const end = Number(segment.end) + PADDING_SECONDS;
+          const duration = Math.max(0, end - start);
+          const fadeOutStart = Math.max(0, duration - FADE_SECONDS);
+          const name = `clip_${String(index).padStart(3, "0")}.mp3`;
+          clipNames.push(name);
+          setStatus(`Extracting clip ${index + 1}/${fixture.ordered_segments.length}...`);
+          await ffmpeg.exec([
+            "-ss",
+            start.toFixed(3),
+            "-to",
+            end.toFixed(3),
+            "-i",
+            "input.mp3",
+            "-af",
+            `afade=t=in:st=0:d=${FADE_SECONDS},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${FADE_SECONDS}`,
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "128k",
+            name
+          ]);
+        }
+
+        await ffmpeg.writeFile(
+          "concat.txt",
+          new TextEncoder().encode(clipNames.map((name) => `file '${name}'`).join("\n") + "\n")
+        );
+        setStatus("Concatenating output...");
+        await ffmpeg.exec([
+          "-f",
+          "concat",
+          "-safe",
+          "0",
+          "-i",
+          "concat.txt",
+          "-c:a",
+          "libmp3lame",
+          "-b:a",
+          "128k",
+          "output.mp3"
+        ]);
+
+        const data = await ffmpeg.readFile("output.mp3");
+        const blob = new Blob([data.buffer], { type: "audio/mpeg" });
+        download.href = URL.createObjectURL(blob);
+        download.hidden = false;
+        setStatus(`Done in ${((performance.now() - started) / 1000).toFixed(1)}s.`);
+      });
+
+      function setStatus(value) {
+        status.textContent = value;
+      }
+
+      function appendLog(value) {
+        log.textContent += `${value}\n`;
+      }
+    </script>
+  </body>
+</html>
