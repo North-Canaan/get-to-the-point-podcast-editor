@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,5 +28,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
+    if os.getenv("VERCEL") and settings.data_dir == Path("data"):
+        settings.data_dir = Path("/tmp/podcast-editor-data")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     return settings
