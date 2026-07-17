@@ -20,7 +20,8 @@ store = JobStore(settings)
 app = FastAPI(title="Get To The Point Podcast Editor")
 
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
-app.mount("/assets", StaticFiles(directory=PUBLIC_DIR / "assets"), name="assets")
+if (PUBLIC_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=PUBLIC_DIR / "assets"), name="assets")
 
 
 def public_file(name: str) -> FileResponse:

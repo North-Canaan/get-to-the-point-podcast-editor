@@ -5,6 +5,24 @@
       "excludeFiles": "{tests/**,data/**,supabase/**,scripts/**,**/__pycache__/**,**/*.pyc}"
     }
   },
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/how-it-works",
+      "destination": "/how-it-works.html"
+    },
+    {
+      "source": "/faq",
+      "destination": "/faq.html"
+    },
+    {
+      "source": "/jobs/:job_id/review",
+      "destination": "/review.html"
+    }
+  ],
   "headers": [
     {
       "source": "/jobs/(.*)",
