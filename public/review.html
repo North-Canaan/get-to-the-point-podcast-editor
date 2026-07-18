@@ -70,12 +70,13 @@
         <span class="selection-count" id="selection-count" aria-live="polite"></span>
         <button class="button" id="produce" hidden type="button">Create edited episode</button>
         <a class="button secondary" id="output-link" hidden>Download edited episode</a>
+        <button class="button" id="podcast-feed-action" hidden type="button">Add to podcast app</button>
       </div>
       <section class="listening-card" id="listening-card" hidden aria-labelledby="listening-title">
         <h2 id="listening-title">Listen to your edited episode</h2>
         <audio id="edited-episode" controls preload="metadata"></audio>
         <div class="private-feed">
-          <h3>Play it in your podcast app</h3>
+          <h3>Your personalized podcast feed</h3>
           <p>Add this private RSS feed to Apple Podcasts, Overcast, Pocket Casts, or another app that supports adding a show by URL.</p>
           <div class="feed-copy-row">
             <input id="private-feed-url" type="text" readonly aria-label="Private RSS feed URL" />
@@ -125,6 +126,7 @@
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
       const outputLink = document.querySelector("#output-link");
+      const podcastFeedAction = document.querySelector("#podcast-feed-action");
       const listeningCard = document.querySelector("#listening-card");
       const editedEpisode = document.querySelector("#edited-episode");
       const privateFeedUrl = document.querySelector("#private-feed-url");
@@ -132,6 +134,11 @@
       const produceLog = document.querySelector("#produce-log");
       const PADDING_SECONDS = 0.3;
       const FADE_SECONDS = 0.02;
+
+      podcastFeedAction.addEventListener("click", () => {
+        listeningCard.scrollIntoView({ behavior: "smooth", block: "start" });
+        privateFeedUrl.focus({ preventScroll: true });
+      });
 
       const pathMatch = location.pathname.match(/\/jobs\/([^/]+)\/review/);
       const requestedJobId = pathMatch?.[1] || new URLSearchParams(location.search).get("job_id");
@@ -441,6 +448,7 @@
           ? `${selectedTotal} ${selectedTotal === 1 ? "highlight" : "highlights"} selected`
           : "Select at least one highlight to continue";
         produce.hidden = !hasApproval || outputReady;
+        podcastFeedAction.hidden = !outputReady;
         produce.disabled = state.producing;
         produceActions.hidden = !hasHighlights && outputLink.hidden;
       }
@@ -449,6 +457,7 @@
         const outputUrl = `/jobs/${state.jobId}/output`;
         outputLink.href = outputUrl;
         outputLink.hidden = false;
+        podcastFeedAction.hidden = false;
         editedEpisode.src = outputUrl;
         listeningCard.hidden = false;
         privateFeedUrl.value = "Preparing your private feed…";
