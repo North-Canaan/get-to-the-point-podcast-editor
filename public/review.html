@@ -47,11 +47,39 @@
       <div class="audio-wrap" id="audio-wrap" hidden>
         <audio id="audio" controls preload="metadata"></audio>
       </div>
+      <section class="highlight-controls" id="highlight-controls" hidden aria-labelledby="highlight-controls-title">
+        <div>
+          <h2 id="highlight-controls-title">Choose your highlights</h2>
+          <p>Select a topic or include highlights from the whole episode.</p>
+        </div>
+        <fieldset>
+          <legend>Topic</legend>
+          <div class="topic-options" id="topic-options"></div>
+        </fieldset>
+        <label class="length-control" for="target-minutes">
+          <span>Edited episode length</span>
+          <span><input id="target-minutes" type="number" min="1" max="120" value="15" /> minutes</span>
+        </label>
+        <button class="button" id="update-highlights" type="button">Find highlights</button>
+      </section>
       <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates" hidden></section>
       <div class="actions" id="produce-actions" hidden>
-        <button class="button" id="produce" disabled type="button">Create final MP3</button>
-        <a class="button secondary" id="output-link" hidden>Download final MP3</a>
+        <button class="button" id="produce" hidden type="button">Create edited episode</button>
+        <a class="button secondary" id="output-link" hidden>Download edited episode</a>
       </div>
+      <section class="listening-card" id="listening-card" hidden aria-labelledby="listening-title">
+        <h2 id="listening-title">Listen to your edited episode</h2>
+        <audio id="edited-episode" controls preload="metadata"></audio>
+        <div class="private-feed">
+          <h3>Play it in your podcast app</h3>
+          <p>Add this private RSS feed to Apple Podcasts, Overcast, Pocket Casts, or another app that supports adding a show by URL.</p>
+          <div class="feed-copy-row">
+            <input id="private-feed-url" type="text" readonly aria-label="Private RSS feed URL" />
+            <button class="button secondary" id="copy-feed-url" type="button">Copy private feed URL</button>
+          </div>
+          <p class="feed-privacy">Keep this link private. Anyone with it can play your edited episodes from this browser’s feed.</p>
+        </div>
+      </section>
       <pre id="produce-log" style="white-space: pre-wrap"></pre>
     </main>
     <script type="module">
@@ -62,6 +90,8 @@
         jobId: "",
         highlights: [],
         decisions: new Map(),
+        producing: false,
+        feedToken: "",
         stopTimer: null,
         pollTimer: null
       };
@@ -71,11 +101,19 @@
       const processingState = document.querySelector("#processing-state");
       const episodeTitle = document.querySelector("#episode-title");
       const audioWrap = document.querySelector("#audio-wrap");
+      const highlightControls = document.querySelector("#highlight-controls");
+      const topicOptions = document.querySelector("#topic-options");
+      const targetMinutes = document.querySelector("#target-minutes");
+      const updateHighlights = document.querySelector("#update-highlights");
       const produceActions = document.querySelector("#produce-actions");
       const list = document.querySelector("#highlight-list");
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
       const outputLink = document.querySelector("#output-link");
+      const listeningCard = document.querySelector("#listening-card");
+      const editedEpisode = document.querySelector("#edited-episode");
+      const privateFeedUrl = document.querySelector("#private-feed-url");
+      const copyFeedUrl = document.querySelector("#copy-feed-url");
       const produceLog = document.querySelector("#produce-log");
       const PADDING_SECONDS = 0.3;
       const FADE_SECONDS = 0.02;
@@ -116,9 +154,47 @@
         if (jobId) loadJob(jobId);
       });
 
+      copyFeedUrl.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(privateFeedUrl.value);
+        copyFeedUrl.textContent = "Copied";
+        window.setTimeout(() => { copyFeedUrl.textContent = "Copy private feed URL"; }, 1800);
+      });
+
+      updateHighlights.addEventListener("click", async () => {
+        const selectedTopic = document.querySelector('input[name="highlight-topic"]:checked')?.value || "";
+        const minutes = Math.max(1, Math.min(120, Number(targetMinutes.value) || 15));
+        const previousOutputReady = !outputLink.hidden;
+        outputLink.hidden = true;
+        listeningCard.hidden = true;
+        syncActions();
+        updateHighlights.disabled = true;
+        list.hidden = true;
+        setStatus("Finding your highlights…", "This uses the saved transcript and may take a moment.");
+        try {
+          const response = await fetch(`/jobs/${state.jobId}/highlights`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ topic: selectedTopic || null, target_minutes: minutes })
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || "Could not find highlights");
+          applyHighlights(payload);
+          setStatus("Highlights are ready.", "Approve or reject the suggested clips below.");
+        } catch (error) {
+          outputLink.hidden = !previousOutputReady;
+          if (previousOutputReady) revealOutput();
+          syncActions();
+          setStatus("Could not update highlights.", error.message || "Please try again.", "error");
+          list.hidden = false;
+        } finally {
+          updateHighlights.disabled = false;
+        }
+      });
+
       produce.addEventListener("click", async () => {
         try {
-          produce.disabled = true;
+          state.producing = true;
+          syncActions();
           produceLog.textContent = "";
           const approved = state.highlights
             .filter((item) => state.decisions.get(item.id)?.decision === "approve")
@@ -134,10 +210,11 @@
           });
           if (!response.ok) {
             setStatus("Could not submit review.");
-            syncProduce();
+            state.producing = false;
+            syncActions();
             return;
           }
-          setStatus("Creating the final MP3 in this browser...");
+          setStatus("Creating the edited episode in this browser...");
           const blob = await spliceInBrowser(`/jobs/${state.jobId}/audio`, approved);
           setStatus("Uploading output...");
           const form = new FormData();
@@ -149,22 +226,27 @@
           if (!upload.ok) {
             throw new Error(`Output upload failed: ${upload.status}`);
           }
-          outputLink.href = `/jobs/${state.jobId}/output`;
-          outputLink.hidden = false;
-          setStatus("Final MP3 is ready to download.");
+          await revealOutput();
+          setStatus("Your edited episode is ready to download.");
         } catch (error) {
           console.error(error);
           appendProduceLog(`ERROR: ${error && error.stack ? error.stack : error}`);
-          setStatus("MP3 creation failed. See the details below.");
+          setStatus("Edited episode creation failed. See the details below.");
         } finally {
-          syncProduce();
+          state.producing = false;
+          syncActions();
         }
       });
 
       async function loadJob(jobId) {
         state.jobId = jobId;
+        state.highlights = [];
+        state.decisions.clear();
+        state.producing = false;
         window.clearTimeout(state.pollTimer);
         outputLink.hidden = true;
+        listeningCard.hidden = true;
+        syncActions();
         setStatus("Loading episode…", "Checking the processing status.");
         const response = await fetch(`/jobs/${jobId}/state`);
         if (!response.ok) {
@@ -188,11 +270,15 @@
         }
         audio.src = `/jobs/${jobId}/audio`;
         audioWrap.hidden = false;
+        applyHighlights(payload.highlights);
+      }
+
+      function applyHighlights(payload) {
         list.hidden = false;
-        produceActions.hidden = false;
+        highlightControls.hidden = false;
         processingState.classList.add("ready");
         document.querySelector("#review-title").textContent = "Review suggested highlights";
-        state.highlights = [...payload.highlights.highlights].sort((a, b) => b.score - a.score);
+        state.highlights = [...payload.highlights].sort((a, b) => b.score - a.score);
         state.decisions.clear();
         state.highlights.forEach((item) => {
           state.decisions.set(item.id, {
@@ -201,8 +287,28 @@
             end: item.end
           });
         });
+        renderTopics(payload.topics || [], payload.selection?.topic || "");
+        targetMinutes.value = payload.selection?.target_minutes || targetMinutes.value || 15;
         renderHighlights();
-        syncProduce();
+        syncActions();
+      }
+
+      function renderTopics(topics, selectedTopic) {
+        topicOptions.innerHTML = "";
+        const choices = [{ value: "", label: "All topics" }, ...topics.map((topic) => ({ value: topic, label: topic }))];
+        choices.forEach((choice, index) => {
+          const label = document.createElement("label");
+          label.className = "topic-option";
+          const input = document.createElement("input");
+          input.type = "radio";
+          input.name = "highlight-topic";
+          input.value = choice.value;
+          input.checked = choice.value === selectedTopic || (!selectedTopic && index === 0);
+          const text = document.createElement("span");
+          text.textContent = choice.label;
+          label.append(input, text);
+          topicOptions.append(label);
+        });
       }
 
       function renderJobStatus(payload) {
@@ -210,17 +316,15 @@
           queued: ["Starting episode…", "Submitting the audio for transcription."],
           transcribing: ["Transcribing the episode…", "Hebrew transcription and speaker detection can take several minutes."],
           detecting_highlights: ["Finding the strongest moments…", "The transcript is ready and highlight suggestions are being created."],
-          needs_review: ["Highlights are ready.", "Approve, reject, reorder, or adjust the suggested clips below."],
+          needs_review: ["Highlights are ready.", "Approve or reject the suggested clips below."],
           splicing: ["Edit saved.", "The final audio is being prepared in this browser."],
-          done: ["Your final MP3 is ready.", "Download the finished audio file below."],
+          done: ["Your edited episode is ready.", "Download the finished episode below."],
           error: ["We could not process this episode.", payload.error || "Please choose the episode again or try another feed."]
         };
         const message = messages[payload.status] || ["Processing episode…", "This page will update automatically."];
         setStatus(message[0], message[1], payload.status === "error" ? "error" : "");
         if (payload.status === "done") {
-          outputLink.href = `/jobs/${state.jobId}/output`;
-          outputLink.hidden = false;
-          produceActions.hidden = false;
+          revealOutput();
           processingState.classList.add("ready");
         }
       }
@@ -269,7 +373,7 @@
           const current = state.decisions.get(id);
           current.decision = current.decision === value ? "" : value;
           renderHighlights();
-          syncProduce();
+          syncActions();
         });
         return button;
       }
@@ -286,8 +390,51 @@
         }, 80);
       }
 
-      function syncProduce() {
-        produce.disabled = ![...state.decisions.values()].some((item) => item.decision === "approve");
+      function syncActions() {
+        const hasApproval = [...state.decisions.values()].some((item) => item.decision === "approve");
+        const outputReady = !outputLink.hidden;
+        produce.hidden = !hasApproval || outputReady;
+        produce.disabled = state.producing;
+        produceActions.hidden = produce.hidden && outputLink.hidden;
+      }
+
+      async function revealOutput() {
+        const outputUrl = `/jobs/${state.jobId}/output`;
+        outputLink.href = outputUrl;
+        outputLink.hidden = false;
+        editedEpisode.src = outputUrl;
+        listeningCard.hidden = false;
+        syncActions();
+        try {
+          const token = getPrivateFeedToken();
+          const response = await fetch(`/jobs/${state.jobId}/private-feed`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token })
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || "Private feed could not be created");
+          privateFeedUrl.value = new URL(payload.feed_url, location.origin).href;
+        } catch (error) {
+          console.error(error);
+          privateFeedUrl.value = "Private feed unavailable. Please reload and try again.";
+        }
+      }
+
+      function getPrivateFeedToken() {
+        if (state.feedToken) return state.feedToken;
+        const storageKey = "get-to-the-point-private-feed-token";
+        let token = localStorage.getItem(storageKey);
+        if (!token) {
+          const bytes = crypto.getRandomValues(new Uint8Array(32));
+          token = btoa(String.fromCharCode(...bytes))
+            .replaceAll("+", "-")
+            .replaceAll("/", "_")
+            .replaceAll("=", "");
+          localStorage.setItem(storageKey, token);
+        }
+        state.feedToken = token;
+        return token;
       }
 
       function setStatus(value, detail = "", tone = "") {

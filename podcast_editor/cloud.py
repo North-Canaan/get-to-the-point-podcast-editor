@@ -217,6 +217,68 @@ class SupabaseClient:
             response.raise_for_status()
             return response.json()
 
+    def add_private_feed_item(
+        self, token_hash: str, job_id: str, title: str, size_bytes: int
+    ) -> None:
+        headers = {
+            **self.headers,
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=representation",
+        }
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{self.url}/rest/v1/private_feeds?on_conflict=token_hash",
+                headers=headers,
+                json={"token_hash": token_hash},
+            )
+            response.raise_for_status()
+            rows = response.json()
+            feed = rows[0] if rows else self.get_private_feed(token_hash)
+            if not feed:
+                raise RuntimeError("private feed could not be created")
+            feed_id = feed["id"]
+            response = client.post(
+                f"{self.url}/rest/v1/private_feed_items?on_conflict=feed_id,job_id",
+                headers={
+                    **self.headers,
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates",
+                },
+                json={
+                    "feed_id": feed_id,
+                    "job_id": job_id,
+                    "title": title,
+                    "size_bytes": size_bytes,
+                },
+            )
+            response.raise_for_status()
+
+    def get_private_feed(self, token_hash: str) -> dict[str, Any] | None:
+        encoded_hash = quote(token_hash, safe="")
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(
+                f"{self.url}/rest/v1/private_feeds?token_hash=eq.{encoded_hash}&select=id",
+                headers=self.headers,
+            )
+            response.raise_for_status()
+            rows = response.json()
+            return rows[0] if rows else None
+
+    def list_private_feed_items(self, token_hash: str) -> list[dict[str, Any]] | None:
+        feed = self.get_private_feed(token_hash)
+        if not feed:
+            return None
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(
+                f"{self.url}/rest/v1/private_feed_items"
+                f"?feed_id=eq.{feed['id']}"
+                f"&select=job_id,title,size_bytes,published_at"
+                f"&order=published_at.desc",
+                headers=self.headers,
+            )
+            response.raise_for_status()
+            return response.json()
+
 
 def storage_object_not_found(response: httpx.Response) -> bool:
     if response.status_code == 404:

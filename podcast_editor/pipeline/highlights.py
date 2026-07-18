@@ -7,18 +7,23 @@ from anthropic import Anthropic
 from ..config import Settings
 from ..jobs import JobStore
 
-SYSTEM_PROMPT = """You are editing a long, unedited Hebrew-language interview podcast into a tight highlight reel. You will receive a diarized transcript: a list of segments, each with an id, start/end time in seconds, a speaker label, and Hebrew text.
+PROMPT_VERSION = 2
+
+SYSTEM_PROMPT = """You are editing a long, unedited Hebrew-language interview podcast into a tight highlight reel. You will receive a diarized transcript: a list of segments, each with an id, start/end time in seconds, a speaker label, and Hebrew text, plus editorial preferences.
 
 First, infer the conversational roles. The host/interviewer is the speaker who asks questions, introduces topics, and steers; the guest(s) answer at length and supply the substance. Return your role mapping.
 
-Then select the highlight-worthy moments. You are optimizing for a listener who wants the guest's actual insight and none of the host's filler. Prioritize segments where the guest: makes a substantive or surprising claim, reveals specific first-hand detail, pushes back or disagrees, or delivers a self-contained idea that moves the conversation forward. Down-weight host monologues, small talk, throat-clearing, repetition, ad reads, and crosstalk. Keep the interviewer only when their question is required to make the guest's answer intelligible.
+Identify 5–12 concise topic labels, written in Hebrew, that collectively describe the substantive topics covered in the episode.
 
-Prefer segments that stand on their own. When a strong answer starts a few seconds before or after a segment boundary, extend the start/end to capture the complete thought. Aim for 8–15 highlights for a typical episode; return more only if the material genuinely warrants it. Order them by importance, not by timestamp.
+Then select the highlight-worthy moments. You are optimizing for a listener who wants the guest's actual insight and none of the host's filler. Prioritize segments where the guest: makes a substantive or surprising claim, reveals specific first-hand detail, pushes back or disagrees, or delivers a self-contained idea that moves the conversation forward. Down-weight host monologues, small talk, throat-clearing, repetition, ad reads, and crosstalk. Keep the interviewer only when their question is required to make the guest's answer intelligible. Aim for the requested total duration. If a topic is selected, exclude unrelated moments and include every substantive highlight about that topic, using the duration as a target rather than inventing or truncating material.
+
+Prefer segments that stand on their own. When a strong answer starts a few seconds before or after a segment boundary, extend the start/end to capture the complete thought. Order them by importance, not by timestamp.
 
 Write every "reason" field in Hebrew. Return ONLY valid JSON, no preamble, no markdown fences, matching this schema exactly:
 ```
 {
   "roles": { "SPEAKER_00": "host" | "guest" | "other", ... },
+  "topics": ["<hebrew topic>", ...],
   "highlights": [
     { "start": <number>, "end": <number>, "speaker": "<label>", "reason": "<hebrew string>", "score": <1-10> }
   ]
@@ -28,7 +33,13 @@ Write every "reason" field in Hebrew. Return ONLY valid JSON, no preamble, no ma
 MAX_HIGHLIGHT_RESPONSE_TOKENS = 12000
 
 
-def detect_highlights(job_id: str, store: JobStore, settings: Settings) -> dict:
+def detect_highlights(
+    job_id: str,
+    store: JobStore,
+    settings: Settings,
+    topic: str | None = None,
+    target_minutes: int = 15,
+) -> dict:
     transcript = store.read_json(job_id, "transcript")
     if not transcript:
         raise RuntimeError("transcript.json is required before highlight detection")
@@ -36,7 +47,8 @@ def detect_highlights(job_id: str, store: JobStore, settings: Settings) -> dict:
         raise RuntimeError("ANTHROPIC_API_KEY is required for highlight detection")
 
     client = Anthropic(api_key=settings.anthropic_api_key)
-    response_text = call_claude(client, settings.anthropic_model, transcript)
+    selection = {"topic": topic, "target_minutes": target_minutes, "prompt_version": PROMPT_VERSION}
+    response_text = call_claude(client, settings.anthropic_model, transcript, selection=selection)
     try:
         payload = parse_json_response(response_text)
     except ValueError:
@@ -44,19 +56,27 @@ def detect_highlights(job_id: str, store: JobStore, settings: Settings) -> dict:
             client,
             settings.anthropic_model,
             transcript,
+            selection=selection,
             reminder="Return only valid JSON. Do not include markdown fences or commentary.",
         )
         payload = parse_json_response(response_text)
 
-    enriched = enrich_highlights(payload, transcript["segments"])
+    enriched = enrich_highlights(payload, transcript["segments"], selection)
     store.write_json(job_id, "highlights", enriched)
     return enriched
 
 
 def call_claude(
-    client: Anthropic, model: str, transcript: dict, reminder: str | None = None
+    client: Anthropic,
+    model: str,
+    transcript: dict,
+    selection: dict | None = None,
+    reminder: str | None = None,
 ) -> str:
-    content = json.dumps({"segments": transcript["segments"]}, ensure_ascii=False)
+    content = json.dumps(
+        {"editorial_preferences": selection or {}, "segments": transcript["segments"]},
+        ensure_ascii=False,
+    )
     if reminder:
         content = f"{reminder}\n\n{content}"
     message = client.messages.create(
@@ -84,7 +104,9 @@ def strip_code_fences(value: str) -> str:
     return re.sub(r"^```(?:json)?\s*|\s*```$", "", value.strip(), flags=re.IGNORECASE | re.DOTALL)
 
 
-def enrich_highlights(payload: dict, transcript_segments: list[dict]) -> dict:
+def enrich_highlights(
+    payload: dict, transcript_segments: list[dict], selection: dict | None = None
+) -> dict:
     highlights = []
     for index, highlight in enumerate(payload.get("highlights", []), start=1):
         start = float(highlight["start"])
@@ -100,7 +122,12 @@ def enrich_highlights(payload: dict, transcript_segments: list[dict]) -> dict:
                 "text": matching_text(transcript_segments, start, end),
             }
         )
-    return {"roles": payload.get("roles", {}), "highlights": highlights}
+    return {
+        "roles": payload.get("roles", {}),
+        "topics": [str(topic) for topic in payload.get("topics", [])],
+        "selection": selection or {},
+        "highlights": highlights,
+    }
 
 
 def matching_text(transcript_segments: list[dict], start: float, end: float) -> str:

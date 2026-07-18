@@ -1,4 +1,7 @@
 from pathlib import Path
+from datetime import datetime, timezone
+from email.utils import format_datetime
+from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import (
@@ -20,10 +23,13 @@ from .schemas import (
     FeedEpisodesResponse,
     FeedLibraryResponse,
     FeedRequest,
+    HighlightSelectionRequest,
     JobStatus,
+    PrivateFeedRequest,
     ReviewRequest,
     StateResponse,
 )
+from .pipeline.highlights import PROMPT_VERSION, detect_highlights
 
 settings = get_settings()
 store = JobStore(settings)
@@ -201,6 +207,42 @@ def submit_review(job_id: str, review: ReviewRequest) -> JSONResponse:
     return JSONResponse({"ok": True, "job_id": job_id})
 
 
+@app.post("/jobs/{job_id}/highlights")
+def select_highlights(job_id: str, request: HighlightSelectionRequest) -> JSONResponse:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    if not store.read_json(job_id, "transcript"):
+        raise HTTPException(status_code=409, detail="transcript is not ready")
+    selection = {
+        "topic": request.topic,
+        "target_minutes": request.target_minutes,
+        "prompt_version": PROMPT_VERSION,
+    }
+    input_payload = store.read_json(job_id, "input") or {}
+    audio_url = input_payload.get("resolved_audio_url")
+    cached = store.find_cached_highlights(str(audio_url), selection) if audio_url else None
+    if cached:
+        store.write_json(job_id, "highlights", cached)
+        store.set_status(job_id, JobStatus.needs_review)
+        return JSONResponse(cached)
+    store.set_status(job_id, JobStatus.detecting_highlights)
+    try:
+        highlights = detect_highlights(
+            job_id,
+            store,
+            settings,
+            topic=request.topic,
+            target_minutes=request.target_minutes,
+        )
+    except Exception as exc:
+        store.set_status(job_id, JobStatus.error, error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Could not select highlights: {exc}") from exc
+    store.set_status(job_id, JobStatus.needs_review)
+    return JSONResponse(highlights)
+
+
 @app.post("/jobs/{job_id}/output")
 async def upload_output(job_id: str, file: UploadFile = File(...)) -> JSONResponse:
     try:
@@ -210,8 +252,85 @@ async def upload_output(job_id: str, file: UploadFile = File(...)) -> JSONRespon
     output = store.artifact_path(job_id, "output")
     output.write_bytes(await file.read())
     store.upload_media(job_id, output, content_type="audio/mpeg")
-    store.set_status(job_id, JobStatus.done, extra={"output_storage_path": f"{job_id}/output.mp3"})
+    store.set_status(
+        job_id,
+        JobStatus.done,
+        extra={
+            "output_storage_path": f"{job_id}/output.mp3",
+            "output_size_bytes": output.stat().st_size,
+        },
+    )
     return JSONResponse({"ok": True, "job_id": job_id})
+
+
+@app.post("/jobs/{job_id}/private-feed")
+def add_job_to_private_feed(job_id: str, request: PrivateFeedRequest) -> JSONResponse:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    status = store.get_status(job_id)
+    if status.status != JobStatus.done:
+        raise HTTPException(status_code=409, detail="edited episode is not ready")
+    input_payload = store.read_json(job_id, "input") or {}
+    job_record = store.get_job_record(job_id) or {}
+    output = store.artifact_path(job_id, "output")
+    size_bytes = output.stat().st_size if output.exists() else int(job_record.get("output_size_bytes") or 0)
+    title = str(input_payload.get("episode_title") or "Edited episode")
+    store.add_private_feed_item(request.token, job_id, title, size_bytes)
+    return JSONResponse({"ok": True, "feed_url": f"/private-feed/{request.token}.xml"})
+
+
+@app.get("/private-feed/{token}.xml")
+def private_feed(token: str, request: Request) -> Response:
+    validate_private_feed_token(token)
+    items = store.list_private_feed_items(token)
+    if items is None:
+        raise HTTPException(status_code=404, detail="private feed not found")
+    base_url = str(request.base_url).rstrip("/")
+    feed_url = f"{base_url}/private-feed/{token}.xml"
+    item_xml = []
+    for item in items:
+        job_id = str(item["job_id"])
+        published = parse_feed_datetime(str(item.get("published_at") or ""))
+        enclosure_url = f"{base_url}/private-feed/{token}/episodes/{job_id}.mp3"
+        item_xml.append(
+            "<item>"
+            f"<title>{escape(str(item.get('title') or 'Edited episode'))}</title>"
+            f"<guid isPermaLink=\"false\">{escape(job_id)}</guid>"
+            f"<pubDate>{format_datetime(published)}</pubDate>"
+            f"<enclosure url=\"{escape(enclosure_url)}\" "
+            f"length=\"{int(item.get('size_bytes') or 0)}\" type=\"audio/mpeg\"/>"
+            "</item>"
+        )
+    now = format_datetime(datetime.now(timezone.utc))
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<rss version="2.0"><channel>'
+        '<title>My Edited Episodes</title>'
+        '<description>Private edited podcast episodes from Get To The Point.</description>'
+        f'<link>{escape(feed_url)}</link><lastBuildDate>{now}</lastBuildDate>'
+        '<language>he</language>'
+        f"{''.join(item_xml)}"
+        '</channel></rss>'
+    )
+    return Response(
+        xml,
+        media_type="application/rss+xml; charset=utf-8",
+        headers={"Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow"},
+    )
+
+
+@app.get("/private-feed/{token}/episodes/{job_id}.mp3")
+def private_feed_episode(token: str, job_id: str) -> Response:
+    validate_private_feed_token(token)
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="episode not found") from None
+    if not store.private_feed_contains(token, job_id):
+        raise HTTPException(status_code=404, detail="episode not found")
+    return job_output(job_id)
 
 
 @app.get("/jobs/{job_id}/output")
@@ -228,6 +347,22 @@ def job_output(job_id: str) -> FileResponse:
         filename="output.mp3",
         headers={"X-Robots-Tag": "noindex, nofollow"},
     )
+
+
+def validate_private_feed_token(token: str) -> str:
+    if not 32 <= len(token) <= 256 or not all(
+        char.isalnum() or char in "_-" for char in token
+    ):
+        raise HTTPException(status_code=404, detail="private feed not found")
+    return token
+
+
+def parse_feed_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now(timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def ranged_file_response(path: Path, request: Request) -> Response:

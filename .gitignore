@@ -10,3 +10,4 @@ data/
 tmp/
 .vercel/
 .vercel
+supabase/.temp/

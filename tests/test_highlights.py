@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +29,7 @@ def test_parse_json_response_rejects_invalid_shape() -> None:
 def test_enrich_highlights_adds_ids_and_matching_text() -> None:
     payload = {
         "roles": {"SPEAKER_00": "guest"},
+        "topics": ["יזמות", "מימון"],
         "highlights": [
             {
                 "start": 10.0,
@@ -44,10 +46,13 @@ def test_enrich_highlights_adds_ids_and_matching_text() -> None:
         {"start": 25.0, "end": 30.0, "text": "לא רלוונטי"},
     ]
 
-    enriched = enrich_highlights(payload, transcript)
+    selection = {"topic": "יזמות", "target_minutes": 10, "prompt_version": 2}
+    enriched = enrich_highlights(payload, transcript, selection)
 
     assert enriched["highlights"][0]["id"] == "h01"
     assert enriched["highlights"][0]["text"] == "פתיחה הרעיון המרכזי"
+    assert enriched["topics"] == ["יזמות", "מימון"]
+    assert enriched["selection"] == selection
 
 
 def test_call_claude_avoids_deprecated_temperature_parameter() -> None:
@@ -59,7 +64,15 @@ def test_call_claude_avoids_deprecated_temperature_parameter() -> None:
             return SimpleNamespace(content=[SimpleNamespace(type="text", text='{"ok":true}')])
 
     client = SimpleNamespace(messages=Messages())
-    call_claude(client, "claude-test", {"segments": []})
+    call_claude(
+        client,
+        "claude-test",
+        {"segments": []},
+        selection={"topic": "יזמות", "target_minutes": 12},
+    )
 
     assert "temperature" not in captured
     assert captured["max_tokens"] == MAX_HIGHLIGHT_RESPONSE_TOKENS
+    content = json.loads(captured["messages"][0]["content"])
+    assert content["editorial_preferences"]["topic"] == "יזמות"
+    assert content["editorial_preferences"]["target_minutes"] == 12

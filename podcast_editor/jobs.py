@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -134,11 +135,25 @@ class JobStore:
             transcript = self.cloud.download_json_artifact(source_job_id, "transcript.json")
             if transcript:
                 highlights = self.cloud.download_json_artifact(source_job_id, "highlights.json")
-                if highlights:
+                selection = (highlights or {}).get("selection", {})
+                if highlights and selection == {
+                    "topic": None,
+                    "target_minutes": 15,
+                    "prompt_version": 2,
+                }:
                     return transcript, highlights, source_job_id
                 if transcript_only is None:
                     transcript_only = (transcript, None, source_job_id)
         return transcript_only
+
+    def find_cached_highlights(self, audio_url: str, selection: dict) -> dict | None:
+        if not self.cloud:
+            return None
+        for job in self.cloud.find_jobs_by_audio_url(audio_url):
+            highlights = self.cloud.download_json_artifact(str(job["id"]), "highlights.json")
+            if highlights and highlights.get("selection") == selection:
+                return highlights
+        return None
 
     def save_feed(self, url: str, title: str, episode_count: int) -> None:
         if self.cloud:
@@ -167,6 +182,47 @@ class JobStore:
                 or needle in str(feed.get("url", "")).casefold()
             ]
         return sorted(feeds, key=lambda feed: str(feed.get("updated_at", "")), reverse=True)
+
+    def add_private_feed_item(
+        self, token: str, job_id: str, title: str, size_bytes: int
+    ) -> None:
+        token_hash = self.private_feed_token_hash(token)
+        if self.cloud:
+            self.cloud.add_private_feed_item(token_hash, job_id, title, size_bytes)
+            return
+        path = self.settings.data_dir / "private_feeds.json"
+        feeds = self._read_local_feeds(path)
+        feed = feeds.setdefault(token_hash, {"items": []})
+        items = [item for item in feed["items"] if item["job_id"] != job_id]
+        items.append(
+            {
+                "job_id": job_id,
+                "title": title,
+                "size_bytes": size_bytes,
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        feed["items"] = items
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(feeds, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def list_private_feed_items(self, token: str) -> list[dict] | None:
+        token_hash = self.private_feed_token_hash(token)
+        if self.cloud:
+            return self.cloud.list_private_feed_items(token_hash)
+        feeds = self._read_local_feeds(self.settings.data_dir / "private_feeds.json")
+        feed = feeds.get(token_hash)
+        if not feed:
+            return None
+        return sorted(feed["items"], key=lambda item: item["published_at"], reverse=True)
+
+    def private_feed_contains(self, token: str, job_id: str) -> bool:
+        items = self.list_private_feed_items(token)
+        return bool(items and any(item["job_id"] == job_id for item in items))
+
+    @staticmethod
+    def private_feed_token_hash(token: str) -> str:
+        return sha256(token.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _read_local_feeds(path: Path) -> dict[str, dict]:

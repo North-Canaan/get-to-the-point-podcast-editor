@@ -1,6 +1,12 @@
 import json
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
+from podcast_editor.config import Settings
+from podcast_editor.jobs import JobStore, new_job_id
+from podcast_editor.schemas import JobStatus
+import podcast_editor.main as main_module
 from podcast_editor.main import app
 
 
@@ -11,3 +17,28 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
     review_routes = [route for route in app.routes if route.path == "/jobs/{job_id}/review"]
     assert any("GET" in route.methods for route in review_routes)
     assert any("POST" in route.methods for route in review_routes)
+
+
+def test_private_feed_serves_only_attached_edited_episode(monkeypatch, tmp_path: Path) -> None:
+    test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    monkeypatch.setattr(main_module, "store", test_store)
+    job_id = new_job_id()
+    token = "private_feed_token_abcdefghijklmnopqrstuvwxyz"
+    test_store.write_json(job_id, "input", {"episode_title": "A useful conversation"})
+    test_store.artifact_path(job_id, "output").write_bytes(b"edited-audio")
+    test_store.set_status(job_id, JobStatus.done)
+    client = TestClient(app)
+
+    attached = client.post(f"/jobs/{job_id}/private-feed", json={"token": token})
+    assert attached.status_code == 200
+
+    feed = client.get(f"/private-feed/{token}.xml")
+    assert feed.status_code == 200
+    assert "A useful conversation" in feed.text
+    assert f"/private-feed/{token}/episodes/{job_id}.mp3" in feed.text
+
+    episode = client.get(f"/private-feed/{token}/episodes/{job_id}.mp3")
+    assert episode.status_code == 200
+    assert episode.content == b"edited-audio"
+    denied = client.get(f"/private-feed/{'x' * 43}/episodes/{job_id}.mp3")
+    assert denied.status_code == 404

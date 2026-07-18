@@ -86,7 +86,18 @@ class HighlightCandidate(BaseModel):
 
 class Highlights(BaseModel):
     roles: dict[str, Role]
+    topics: list[str] = Field(default_factory=list)
+    selection: dict = Field(default_factory=dict)
     highlights: list[HighlightCandidate]
+
+
+class HighlightSelectionRequest(BaseModel):
+    topic: str | None = Field(default=None, max_length=160)
+    target_minutes: int = Field(default=15, ge=1, le=120)
+
+
+class PrivateFeedRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class StateResponse(BaseModel):
