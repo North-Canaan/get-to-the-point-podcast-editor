@@ -697,6 +697,12 @@ audio {
 .highlight-list {
   display: grid;
   gap: 12px;
+  transition: opacity 180ms ease;
+}
+
+.highlight-list.refreshing {
+  pointer-events: none;
+  opacity: 0.42;
 }
 
 .highlight-row {

@@ -101,6 +101,7 @@
         feedToken: "",
         progressBase: 0,
         progressSpan: 0,
+        progressTimer: null,
         stopTimer: null,
         pollTimer: null
       };
@@ -180,8 +181,11 @@
         listeningCard.hidden = true;
         syncActions();
         updateHighlights.disabled = true;
-        list.hidden = true;
-        setStatus("Finding your highlights…", "This uses the saved transcript and may take a moment.");
+        updateHighlights.textContent = "Finding highlights…";
+        produceActions.hidden = true;
+        list.classList.add("refreshing");
+        list.setAttribute("aria-busy", "true");
+        startHighlightProgress(selectedTopic, minutes);
         try {
           const response = await fetch(`/jobs/${state.jobId}/highlights`, {
             method: "POST",
@@ -191,15 +195,21 @@
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.detail || "Could not find highlights");
           applyHighlights(payload);
+          stopElapsedProgress();
           setStatus("Highlights are ready.", "Select the moments to include in your edited episode.");
         } catch (error) {
+          stopElapsedProgress();
           outputLink.hidden = !previousOutputReady;
           if (previousOutputReady) revealOutput();
           syncActions();
           setStatus("Could not update highlights.", error.message || "Please try again.", "error");
-          list.hidden = false;
         } finally {
+          stopElapsedProgress();
           updateHighlights.disabled = false;
+          updateHighlights.textContent = "Find highlights";
+          list.classList.remove("refreshing");
+          list.removeAttribute("aria-busy");
+          syncActions();
         }
       });
 
@@ -501,6 +511,37 @@
         workProgress.classList.remove("indeterminate");
         workProgress.setAttribute("aria-valuenow", String(Math.round(bounded)));
         workProgressBar.style.width = `${bounded}%`;
+      }
+
+      function startHighlightProgress(topic, minutes) {
+        stopElapsedProgress();
+        const startedAt = Date.now();
+        const scope = topic ? `the topic “${topic}”` : "the whole episode";
+        const update = () => {
+          const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+          const elapsed = formatElapsed(elapsedSeconds);
+          let reassurance = "The AI is reading the saved transcript.";
+          if (elapsedSeconds >= 30) reassurance = "The AI is still comparing and ranking relevant moments.";
+          if (elapsedSeconds >= 90) reassurance = "Long episodes can take a few minutes; the request is still active.";
+          setWorkingStatus(
+            "Finding your highlights…",
+            `${reassurance} Looking at ${scope} for a ${minutes}-minute edit · ${elapsed} elapsed`,
+            null
+          );
+        };
+        update();
+        state.progressTimer = window.setInterval(update, 1000);
+      }
+
+      function stopElapsedProgress() {
+        if (state.progressTimer) window.clearInterval(state.progressTimer);
+        state.progressTimer = null;
+      }
+
+      function formatElapsed(totalSeconds) {
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = String(totalSeconds % 60).padStart(2, "0");
+        return `${minutes}:${seconds}`;
       }
 
       function formatTime(seconds) {
