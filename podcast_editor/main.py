@@ -143,8 +143,12 @@ def job_state(job_id: str) -> StateResponse:
 
     advance_no_worker_job(job_id, store, settings)
     status = store.get_status(job_id)
-    transcript = store.read_json(job_id, "transcript")
-    highlights = store.read_json(job_id, "highlights")
+    transcript = None
+    highlights = None
+    if status.status not in {JobStatus.queued, JobStatus.ingesting, JobStatus.transcribing}:
+        transcript = store.read_json(job_id, "transcript")
+    if status.status in {JobStatus.needs_review, JobStatus.splicing, JobStatus.done, JobStatus.error}:
+        highlights = store.read_json(job_id, "highlights")
     input_payload = store.read_json(job_id, "input") or {}
     return StateResponse(
         job_id=job_id,

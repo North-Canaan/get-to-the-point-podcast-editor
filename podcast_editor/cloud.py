@@ -147,7 +147,7 @@ class SupabaseClient:
                 f"{self.url}/storage/v1/object/{self.bucket}/{object_path}",
                 headers=self.headers,
             )
-            if response.status_code == 404:
+            if storage_object_not_found(response):
                 return False
             response.raise_for_status()
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -161,7 +161,7 @@ class SupabaseClient:
                 f"{self.url}/storage/v1/object/{self.bucket}/{object_path}",
                 headers=self.headers,
             )
-            if response.status_code == 404:
+            if storage_object_not_found(response):
                 return None
             response.raise_for_status()
             return json.loads(response.text)
@@ -179,7 +179,6 @@ class SupabaseClient:
             if signed_url.startswith("http"):
                 return signed_url
             return f"{self.url}/storage/v1{signed_url}"
-
     def upsert_feed(self, url: str, title: str, episode_count: int) -> None:
         headers = {
             **self.headers,
@@ -204,3 +203,18 @@ class SupabaseClient:
             response = client.get(endpoint, headers=self.headers)
             response.raise_for_status()
             return response.json()
+
+
+def storage_object_not_found(response: httpx.Response) -> bool:
+    if response.status_code == 404:
+        return True
+    if response.status_code != 400:
+        return False
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError):
+        return False
+    status_code = str(payload.get("statusCode", ""))
+    error = str(payload.get("error", "")).casefold()
+    message = str(payload.get("message", "")).casefold()
+    return status_code == "404" or error in {"not_found", "not found"} or "not found" in message

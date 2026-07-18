@@ -165,7 +165,12 @@
         setStatus("Loading episode…", "Checking the processing status.");
         const response = await fetch(`/jobs/${jobId}/state`);
         if (!response.ok) {
-          setStatus("Job not found.", "Return to the podcast library and choose the episode again.", "error");
+          if (response.status === 404) {
+            setStatus("Job not found.", "Return to the podcast library and choose the episode again.", "error");
+          } else {
+            setStatus("Could not load this job.", "A temporary server error occurred. Retrying automatically…", "error");
+            state.pollTimer = window.setTimeout(() => loadJob(jobId), 10000);
+          }
           return;
         }
         const payload = await response.json();
