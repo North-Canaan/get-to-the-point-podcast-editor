@@ -435,11 +435,14 @@
       function syncActions() {
         const selectedTotal = [...state.decisions.values()].filter((item) => item.decision === "approve").length;
         const hasApproval = selectedTotal > 0;
+        const hasHighlights = state.highlights.length > 0;
         const outputReady = !outputLink.hidden;
-        selectionCount.textContent = `${selectedTotal} ${selectedTotal === 1 ? "highlight" : "highlights"} selected`;
+        selectionCount.textContent = hasApproval
+          ? `${selectedTotal} ${selectedTotal === 1 ? "highlight" : "highlights"} selected`
+          : "Select at least one highlight to continue";
         produce.hidden = !hasApproval || outputReady;
         produce.disabled = state.producing;
-        produceActions.hidden = produce.hidden && outputLink.hidden;
+        produceActions.hidden = !hasHighlights && outputLink.hidden;
       }
 
       async function revealOutput() {
