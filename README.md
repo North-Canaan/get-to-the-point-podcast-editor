@@ -72,7 +72,6 @@ using the Supabase backend.
 - `POST /jobs` with `{ "url": "..." }`
 - `GET /jobs/{job_id}/state`
 - `GET /jobs/{job_id}/audio`
-- `GET /jobs/{job_id}/transcript`
 - `GET /jobs/{job_id}/review`
 - `POST /jobs/{job_id}/review`
 - `POST /jobs/{job_id}/output`

@@ -22,7 +22,7 @@ def submit_no_worker_job(
     resolved_url = resolve_audio_url(source_url)
     cached = store.find_cached_transcript(resolved_url)
     if cached:
-        transcript, source_job_id = cached
+        transcript, highlights, source_job_id = cached
         input_payload = {
             "source_url": source_url,
             "resolved_audio_url": resolved_url,
@@ -32,9 +32,11 @@ def submit_no_worker_job(
         }
         store.write_json(job_id, "input", input_payload)
         store.write_json(job_id, "transcript", transcript)
+        if highlights:
+            store.write_json(job_id, "highlights", highlights)
         store.set_status(
             job_id,
-            JobStatus.detecting_highlights,
+            JobStatus.needs_review if highlights else JobStatus.detecting_highlights,
             source_url=source_url,
             extra={"resolved_audio_url": resolved_url},
         )

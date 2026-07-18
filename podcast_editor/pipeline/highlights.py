@@ -25,7 +25,7 @@ Write every "reason" field in Hebrew. Return ONLY valid JSON, no preamble, no ma
 }
 ```"""
 
-MAX_HIGHLIGHT_RESPONSE_TOKENS = 4000
+MAX_HIGHLIGHT_RESPONSE_TOKENS = 12000
 
 
 def detect_highlights(job_id: str, store: JobStore, settings: Settings) -> dict:

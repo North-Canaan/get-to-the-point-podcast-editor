@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -189,25 +188,6 @@ def job_audio(job_id: str, request: Request) -> Response:
             return response
         raise HTTPException(status_code=404, detail="audio not found")
     return ranged_file_response(original, request)
-
-
-@app.get("/jobs/{job_id}/transcript")
-def job_transcript(job_id: str) -> Response:
-    try:
-        validate_job_id(job_id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="job not found") from None
-    transcript = store.read_json(job_id, "transcript")
-    if not transcript:
-        raise HTTPException(status_code=404, detail="transcript not ready")
-    return Response(
-        content=json.dumps(transcript, ensure_ascii=False, indent=2),
-        media_type="application/json; charset=utf-8",
-        headers={
-            "Content-Disposition": 'attachment; filename="transcript.json"',
-            "X-Robots-Tag": "noindex, nofollow",
-        },
-    )
 
 
 @app.post("/jobs/{job_id}/review")

@@ -78,7 +78,7 @@ def test_submit_reuses_cached_transcript_without_assemblyai(monkeypatch, tmp_pat
     monkeypatch.setattr(
         store,
         "find_cached_transcript",
-        lambda url: (transcript, "11111111-1111-4111-8111-111111111111"),
+        lambda url: (transcript, None, "11111111-1111-4111-8111-111111111111"),
     )
 
     payload = no_worker.submit_no_worker_job(
@@ -93,3 +93,28 @@ def test_submit_reuses_cached_transcript_without_assemblyai(monkeypatch, tmp_pat
     assert payload["transcript_reused_from"] == "11111111-1111-4111-8111-111111111111"
     assert store.read_json(job_id, "transcript") == transcript
     assert store.get_status(job_id).status == JobStatus.detecting_highlights
+
+
+def test_submit_reuses_cached_highlights_too(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, state_backend="filesystem")
+    store = JobStore(settings)
+    job_id = new_job_id()
+    transcript = {"duration": 30.0, "segments": []}
+    highlights = {"roles": {}, "highlights": []}
+    monkeypatch.setattr(no_worker, "resolve_audio_url", lambda url: url)
+    monkeypatch.setattr(
+        store,
+        "find_cached_transcript",
+        lambda url: (transcript, highlights, "11111111-1111-4111-8111-111111111111"),
+    )
+
+    no_worker.submit_no_worker_job(
+        job_id,
+        "https://cdn.example.com/episode.mp3",
+        store,
+        settings,
+        "Previously Analyzed",
+    )
+
+    assert store.read_json(job_id, "highlights") == highlights
+    assert store.get_status(job_id).status == JobStatus.needs_review
