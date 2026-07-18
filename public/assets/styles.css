@@ -602,6 +602,30 @@ main section {
   font-size: 0.9rem;
 }
 
+.technical-details {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.technical-details summary {
+  padding: 12px 14px;
+  color: var(--muted);
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.technical-details pre {
+  max-height: 360px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+}
+
 @media (max-width: 640px) {
   .feed-copy-row {
     flex-direction: column;

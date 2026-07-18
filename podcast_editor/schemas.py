@@ -100,6 +100,10 @@ class PrivateFeedRequest(BaseModel):
     token: str = Field(min_length=32, max_length=256, pattern=r"^[A-Za-z0-9_-]+$")
 
 
+class CompleteOutputRequest(BaseModel):
+    size_bytes: int = Field(ge=1)
+
+
 class StateResponse(BaseModel):
     job_id: str
     status: JobStatus

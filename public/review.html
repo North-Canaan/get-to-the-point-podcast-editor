@@ -80,7 +80,10 @@
           <p class="feed-privacy">Keep this link private. Anyone with it can play your edited episodes from this browser’s feed.</p>
         </div>
       </section>
-      <pre id="produce-log" style="white-space: pre-wrap"></pre>
+      <details class="technical-details">
+        <summary>Technical details</summary>
+        <pre id="produce-log"></pre>
+      </details>
     </main>
     <script type="module">
       import { FFmpeg } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
@@ -216,16 +219,8 @@
           }
           setStatus("Creating the edited episode in this browser...");
           const blob = await spliceInBrowser(`/jobs/${state.jobId}/audio`, approved);
-          setStatus("Uploading output...");
-          const form = new FormData();
-          form.append("file", blob, "output.mp3");
-          const upload = await fetch(`/jobs/${state.jobId}/output`, {
-            method: "POST",
-            body: form
-          });
-          if (!upload.ok) {
-            throw new Error(`Output upload failed: ${upload.status}`);
-          }
+          setStatus("Saving the edited episode...");
+          await uploadOutput(blob);
           await revealOutput();
           setStatus("Your edited episode is ready to download.");
         } catch (error) {
@@ -423,6 +418,33 @@
           console.error(error);
           privateFeedUrl.value = "Private feed unavailable. Please reload and try again.";
         }
+      }
+
+      async function uploadOutput(blob) {
+        const signingResponse = await fetch(`/jobs/${state.jobId}/output-upload-url`, { method: "POST" });
+        if (signingResponse.ok) {
+          const { upload_url: uploadUrl } = await signingResponse.json();
+          const uploadBody = new FormData();
+          uploadBody.append("cacheControl", "3600");
+          uploadBody.append("", blob, "output.mp3");
+          const upload = await fetch(uploadUrl, {
+            method: "PUT",
+            body: uploadBody
+          });
+          if (!upload.ok) throw new Error(`Audio storage upload failed: ${upload.status}`);
+          const complete = await fetch(`/jobs/${state.jobId}/output-complete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ size_bytes: blob.size })
+          });
+          if (!complete.ok) throw new Error(`Could not finalize edited episode: ${complete.status}`);
+          return;
+        }
+
+        const form = new FormData();
+        form.append("file", blob, "output.mp3");
+        const upload = await fetch(`/jobs/${state.jobId}/output`, { method: "POST", body: form });
+        if (!upload.ok) throw new Error(`Output upload failed: ${upload.status}`);
       }
 
       function getPrivateFeedToken() {

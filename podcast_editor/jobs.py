@@ -106,6 +106,11 @@ class JobStore:
             return None
         return self.cloud.create_signed_url(f"{job_id}/{filename}")
 
+    def signed_media_upload_url(self, job_id: str, filename: str) -> str | None:
+        if not self.cloud:
+            return None
+        return self.cloud.create_signed_upload_url(f"{job_id}/{filename}")
+
     def download_media(self, job_id: str, filename: str, target: Path) -> bool:
         if not self.cloud:
             return False

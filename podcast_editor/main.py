@@ -20,6 +20,7 @@ from .pipeline.ingest import IngestError, list_feed_episodes
 from .schemas import (
     CreateJobRequest,
     CreateJobResponse,
+    CompleteOutputRequest,
     FeedEpisodesResponse,
     FeedLibraryResponse,
     FeedRequest,
@@ -258,6 +259,35 @@ async def upload_output(job_id: str, file: UploadFile = File(...)) -> JSONRespon
         extra={
             "output_storage_path": f"{job_id}/output.mp3",
             "output_size_bytes": output.stat().st_size,
+        },
+    )
+    return JSONResponse({"ok": True, "job_id": job_id})
+
+
+@app.post("/jobs/{job_id}/output-upload-url")
+def output_upload_url(job_id: str) -> JSONResponse:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    signed_url = store.signed_media_upload_url(job_id, "output.mp3")
+    if not signed_url:
+        raise HTTPException(status_code=501, detail="direct upload is unavailable")
+    return JSONResponse({"upload_url": signed_url})
+
+
+@app.post("/jobs/{job_id}/output-complete")
+def complete_output(job_id: str, request: CompleteOutputRequest) -> JSONResponse:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    store.set_status(
+        job_id,
+        JobStatus.done,
+        extra={
+            "output_storage_path": f"{job_id}/output.mp3",
+            "output_size_bytes": request.size_bytes,
         },
     )
     return JSONResponse({"ok": True, "job_id": job_id})

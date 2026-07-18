@@ -192,6 +192,22 @@ class SupabaseClient:
             if signed_url.startswith("http"):
                 return signed_url
             return f"{self.url}/storage/v1{signed_url}"
+
+    def create_signed_upload_url(self, object_path: str) -> str:
+        headers = {**self.headers, "Content-Type": "application/json", "x-upsert": "true"}
+        encoded_path = quote(object_path, safe="/")
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{self.url}/storage/v1/object/upload/sign/{self.bucket}/{encoded_path}",
+                headers=headers,
+                json={},
+            )
+            response.raise_for_status()
+            signed_url = response.json()["url"]
+            if signed_url.startswith("http"):
+                return signed_url
+            return f"{self.url}/storage/v1{signed_url}"
+
     def upsert_feed(self, url: str, title: str, episode_count: int) -> None:
         headers = {
             **self.headers,

@@ -17,6 +17,9 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
     review_routes = [route for route in app.routes if route.path == "/jobs/{job_id}/review"]
     assert any("GET" in route.methods for route in review_routes)
     assert any("POST" in route.methods for route in review_routes)
+    route_paths = {route.path for route in app.routes}
+    assert "/jobs/{job_id}/output-upload-url" in route_paths
+    assert "/jobs/{job_id}/output-complete" in route_paths
 
 
 def test_private_feed_serves_only_attached_edited_episode(monkeypatch, tmp_path: Path) -> None:
