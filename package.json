@@ -1,0 +1,14 @@
+{
+  "name": "get-to-the-point-auth",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "better-auth": "1.6.23",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "typescript": "^5.9.3"
+  }
+}

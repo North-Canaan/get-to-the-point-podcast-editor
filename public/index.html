@@ -44,6 +44,7 @@
           <a href="/how-it-works">How it works</a>
           <a href="/faq">FAQ</a>
           <a href="/review.html">Review app</a>
+          <a data-auth-link href="/auth.html">Sign in</a>
         </div>
       </nav>
     </header>
@@ -131,6 +132,7 @@
       </section>
     </main>
     <footer class="site-footer">Podcast editing software for finding and sharing the moments that matter.</footer>
+    <script src="/assets/auth.js" defer></script>
     <script>
       const form = document.querySelector("#feed-form");
       const status = document.querySelector("#feed-status");
@@ -170,6 +172,10 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url: feedUrl }),
           });
+          if (response.status === 401) {
+            location.href = `/auth.html?returnTo=${encodeURIComponent(location.href)}`;
+            return;
+          }
           const data = await response.json();
           if (!response.ok) throw new Error(data.detail || "Could not load this feed");
           title.textContent = `Choose an episode from ${data.title}`;

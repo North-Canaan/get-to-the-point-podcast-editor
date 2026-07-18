@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Sign in | Get To The Point</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <header class="site-header"><nav class="nav"><a class="brand" href="/">Get To The Point</a><div class="nav-links"><a class="home-button" href="/">Home</a></div></nav></header>
+    <main class="auth-shell">
+      <section class="auth-card">
+        <div class="auth-tabs" role="tablist">
+          <button class="button" id="show-sign-in" type="button">Sign in</button>
+          <button class="button secondary" id="show-sign-up" type="button">Create account</button>
+        </div>
+        <form id="auth-form">
+          <h1 id="auth-title">Sign in</h1>
+          <label id="name-label" for="name" hidden>Name</label>
+          <input id="name" autocomplete="name" hidden />
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="email" required />
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" minlength="8" required />
+          <button class="button" id="auth-submit" type="submit">Sign in</button>
+          <p id="auth-status" class="feed-status" aria-live="polite"></p>
+        </form>
+      </section>
+    </main>
+    <script>
+      const form = document.querySelector("#auth-form");
+      const title = document.querySelector("#auth-title");
+      const submit = document.querySelector("#auth-submit");
+      const status = document.querySelector("#auth-status");
+      const nameInput = document.querySelector("#name");
+      const nameLabel = document.querySelector("#name-label");
+      let mode = "sign-in";
+      function setMode(next) {
+        mode = next;
+        const signingUp = mode === "sign-up";
+        title.textContent = signingUp ? "Create your account" : "Sign in";
+        submit.textContent = signingUp ? "Create account" : "Sign in";
+        nameInput.hidden = nameLabel.hidden = !signingUp;
+        nameInput.required = signingUp;
+        document.querySelector("#password").autocomplete = signingUp ? "new-password" : "current-password";
+        status.textContent = "";
+      }
+      document.querySelector("#show-sign-in").addEventListener("click", () => setMode("sign-in"));
+      document.querySelector("#show-sign-up").addEventListener("click", () => setMode("sign-up"));
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        submit.disabled = true;
+        status.textContent = mode === "sign-up" ? "Creating your account…" : "Signing you in…";
+        const body = { email: document.querySelector("#email").value, password: document.querySelector("#password").value };
+        if (mode === "sign-up") body.name = nameInput.value;
+        try {
+          const response = await fetch(`/api/auth/${mode}/email`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.message || "Authentication failed");
+          location.href = new URLSearchParams(location.search).get("returnTo") || "/account.html";
+        } catch (error) {
+          status.textContent = error.message;
+        } finally { submit.disabled = false; }
+      });
+    </script>
+  </body>
+</html>

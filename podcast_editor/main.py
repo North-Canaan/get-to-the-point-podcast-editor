@@ -14,6 +14,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
+from .auth import current_user, personal_feed_token
 from .jobs import JobStore, new_job_id, validate_job_id
 from .pipeline.no_worker import advance_no_worker_job, submit_no_worker_job
 from .pipeline.ingest import IngestError, list_feed_episodes
@@ -104,6 +105,16 @@ def review_html_direct() -> FileResponse:
     return public_file("review.html")
 
 
+@app.get("/auth.html", include_in_schema=False)
+def auth_html() -> FileResponse:
+    return public_file("auth.html")
+
+
+@app.get("/account.html", include_in_schema=False)
+def account_html() -> FileResponse:
+    return public_file("account.html")
+
+
 @app.get("/robots.txt", include_in_schema=False)
 def robots() -> FileResponse:
     return public_file("robots.txt")
@@ -115,13 +126,19 @@ def sitemap() -> FileResponse:
 
 
 @app.post("/jobs", response_model=CreateJobResponse)
-def create_job(request: CreateJobRequest) -> CreateJobResponse:
+def create_job(payload: CreateJobRequest, request: Request) -> CreateJobResponse:
+    user = current_user(request, settings) if settings.better_auth_url else None
     job_id = new_job_id()
-    store.set_status(job_id, JobStatus.queued, source_url=request.url)
+    store.set_status(
+        job_id,
+        JobStatus.queued,
+        source_url=payload.url,
+        extra={"user_id": user["id"], "episode_title": payload.title} if user else None,
+    )
     try:
-        submit_no_worker_job(job_id, request.url, store, settings, request.title)
+        submit_no_worker_job(job_id, payload.url, store, settings, payload.title)
     except Exception as exc:
-        store.set_status(job_id, JobStatus.error, error=str(exc), source_url=request.url)
+        store.set_status(job_id, JobStatus.error, error=str(exc), source_url=payload.url)
         raise HTTPException(status_code=502, detail=f"Could not start episode processing: {exc}") from exc
     return CreateJobResponse(job_id=job_id)
 
@@ -294,7 +311,9 @@ def complete_output(job_id: str, request: CompleteOutputRequest) -> JSONResponse
 
 
 @app.post("/jobs/{job_id}/private-feed")
-def add_job_to_private_feed(job_id: str, request: PrivateFeedRequest) -> JSONResponse:
+def add_job_to_private_feed(
+    job_id: str, payload: PrivateFeedRequest, request: Request
+) -> JSONResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
@@ -307,8 +326,23 @@ def add_job_to_private_feed(job_id: str, request: PrivateFeedRequest) -> JSONRes
     output = store.artifact_path(job_id, "output")
     size_bytes = output.stat().st_size if output.exists() else int(job_record.get("output_size_bytes") or 0)
     title = str(input_payload.get("episode_title") or "Edited episode")
-    store.add_private_feed_item(request.token, job_id, title, size_bytes)
-    return JSONResponse({"ok": True, "feed_url": f"/private-feed/{request.token}.xml"})
+    user = current_user(request, settings) if settings.better_auth_url else None
+    token = personal_feed_token(user["id"], settings) if user else payload.token
+    store.add_private_feed_item(token, job_id, title, size_bytes, user["id"] if user else None)
+    return JSONResponse({"ok": True, "feed_url": f"/private-feed/{token}.xml"})
+
+
+@app.get("/me")
+def me(request: Request) -> JSONResponse:
+    user = current_user(request, settings)
+    token = personal_feed_token(user["id"], settings)
+    return JSONResponse(
+        {
+            "user": {"id": user["id"], "name": user.get("name"), "email": user.get("email")},
+            "feed_url": f"/private-feed/{token}.xml",
+            "jobs": store.list_user_jobs(user["id"]),
+        }
+    )
 
 
 @app.get("/private-feed/{token}.xml")

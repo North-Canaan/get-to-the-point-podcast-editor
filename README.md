@@ -15,6 +15,14 @@ tighten the final segments, then splices an MP3 in the browser with ffmpeg.wasm.
 This is the no-owned-worker path. The older Python/WhisperX worker code remains in the repo as a
 fallback, but the main product flow does not require running a daemon.
 
+## Accounts
+
+Email/password accounts use Better Auth, not Supabase Auth. Better Auth stores users and sessions
+in Postgres; Supabase remains the database and object-storage provider. Set `DATABASE_URL`,
+`BETTER_AUTH_URL`, and a high-entropy `BETTER_AUTH_SECRET` of at least 32 characters, then apply
+`supabase/migrations/0003_better_auth.sql`. Episode jobs and the personal podcast feed are then tied
+to the signed-in user across browsers and devices.
+
 ## Stack
 
 - Python 3.11+ for local development and FastAPI

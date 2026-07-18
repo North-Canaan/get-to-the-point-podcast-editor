@@ -86,6 +86,18 @@ class SupabaseClient:
             rows = response.json()
             return rows[0] if rows else None
 
+    def list_user_jobs(self, user_id: str) -> list[dict[str, Any]]:
+        encoded_user = quote(user_id, safe="")
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(
+                f"{self.url}/rest/v1/jobs?user_id=eq.{encoded_user}"
+                "&select=id,status,source_url,episode_title,created_at,updated_at,output_size_bytes"
+                "&order=created_at.desc&limit=100",
+                headers=self.headers,
+            )
+            response.raise_for_status()
+            return response.json()
+
     def find_jobs_by_audio_url(self, audio_url: str, limit: int = 5) -> list[dict[str, Any]]:
         encoded_url = quote(audio_url, safe="")
         with httpx.Client(timeout=20.0) as client:
@@ -234,7 +246,7 @@ class SupabaseClient:
             return response.json()
 
     def add_private_feed_item(
-        self, token_hash: str, job_id: str, title: str, size_bytes: int
+        self, token_hash: str, job_id: str, title: str, size_bytes: int, user_id: str | None = None
     ) -> None:
         headers = {
             **self.headers,
@@ -245,7 +257,7 @@ class SupabaseClient:
             response = client.post(
                 f"{self.url}/rest/v1/private_feeds?on_conflict=token_hash",
                 headers=headers,
-                json={"token_hash": token_hash},
+                json={"token_hash": token_hash, "user_id": user_id},
             )
             response.raise_for_status()
             rows = response.json()

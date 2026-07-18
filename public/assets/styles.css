@@ -151,6 +151,46 @@ a {
   margin-top: 24px;
 }
 
+.auth-shell {
+  display: grid;
+  min-height: calc(100vh - 80px);
+  place-items: center;
+  padding: 32px 16px;
+}
+
+.auth-card {
+  width: min(100%, 480px);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.auth-card form {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 10px;
+}
+
+.account-shell {
+  display: grid;
+  gap: 24px;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
 .feed-form {
   margin-top: 26px;
   max-width: 700px;

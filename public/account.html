@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="robots" content="noindex, nofollow" /><title>My episodes | Get To The Point</title><link rel="stylesheet" href="/assets/styles.css" /></head>
+  <body>
+    <header class="site-header"><nav class="nav"><a class="brand" href="/">Get To The Point</a><div class="nav-links"><a class="home-button" href="/">Home</a><button class="link-button" id="sign-out" type="button">Sign out</button></div></nav></header>
+    <main class="section-inner account-shell">
+      <h1>My episodes</h1><p id="account-name"></p>
+      <section class="card"><h2>Personal podcast feed</h2><p>Your completed edits appear in this private feed.</p><div class="feed-copy-row"><input id="account-feed" readonly /><button class="button secondary" id="copy-account-feed">Copy feed URL</button></div></section>
+      <section><h2>Episode history</h2><div class="episode-list" id="account-jobs"><p>Loading your episodes…</p></div></section>
+    </main>
+    <script type="module">
+      const response = await fetch("/me");
+      if (response.status === 401) location.href = "/auth.html?returnTo=/account.html";
+      else if (!response.ok) document.querySelector("#account-jobs").textContent = "Could not load your account.";
+      else {
+        const data = await response.json();
+        document.querySelector("#account-name").textContent = data.user.email;
+        document.querySelector("#account-feed").value = new URL(data.feed_url, location.origin).href;
+        const jobs = document.querySelector("#account-jobs"); jobs.innerHTML = "";
+        if (!data.jobs.length) jobs.innerHTML = "<p>No episodes yet. Choose one from the podcast library.</p>";
+        for (const job of data.jobs) {
+          const item = document.createElement("article"); item.className = "episode-card";
+          const title = document.createElement("h3"); title.textContent = job.episode_title || (job.status === "done" ? "Edited episode" : "Episode in progress");
+          const detail = document.createElement("p"); detail.textContent = job.status.replaceAll("_", " ");
+          const copy = document.createElement("div"); copy.append(title, detail);
+          const open = document.createElement("a"); open.className = "button secondary"; open.href = `/review.html?job_id=${job.id}`; open.textContent = "Open";
+          item.append(copy, open);
+          jobs.append(item);
+        }
+      }
+      document.querySelector("#copy-account-feed").addEventListener("click", () => navigator.clipboard.writeText(document.querySelector("#account-feed").value));
+      document.querySelector("#sign-out").addEventListener("click", async () => { await fetch("/api/auth/sign-out", { method: "POST" }); location.href = "/"; });
+    </script>
+  </body>
+</html>

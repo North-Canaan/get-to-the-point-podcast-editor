@@ -11,7 +11,7 @@
     <header class="site-header">
       <nav class="nav" aria-label="Primary">
         <a class="brand" href="/">Get To The Point</a>
-        <div class="nav-links"><a class="home-button" href="/">Home</a></div>
+        <div class="nav-links"><a class="home-button" href="/">Home</a><a data-auth-link href="/auth.html">Sign in</a></div>
       </nav>
     </header>
     <main class="app-shell">
@@ -90,6 +90,7 @@
         <pre id="produce-log"></pre>
       </details>
     </main>
+    <script src="/assets/auth.js" defer></script>
     <script type="module">
       import { FFmpeg } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
       import { toBlobURL } from "https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js";
@@ -161,6 +162,10 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url })
         });
+        if (response.status === 401) {
+          location.href = `/auth.html?returnTo=${encodeURIComponent(location.href)}`;
+          return;
+        }
         const payload = await response.json();
         if (!response.ok) {
           setStatus("Could not create job.", payload.detail || "Please try again.", "error");

@@ -125,6 +125,9 @@ class JobStore:
             return None
         return self.cloud.get_job(job_id)
 
+    def list_user_jobs(self, user_id: str) -> list[dict]:
+        return self.cloud.list_user_jobs(user_id) if self.cloud else []
+
     def get_status(self, job_id: str) -> StatusRecord:
         payload = self.read_json(job_id, "status")
         if not payload:
@@ -189,11 +192,11 @@ class JobStore:
         return sorted(feeds, key=lambda feed: str(feed.get("updated_at", "")), reverse=True)
 
     def add_private_feed_item(
-        self, token: str, job_id: str, title: str, size_bytes: int
+        self, token: str, job_id: str, title: str, size_bytes: int, user_id: str | None = None
     ) -> None:
         token_hash = self.private_feed_token_hash(token)
         if self.cloud:
-            self.cloud.add_private_feed_item(token_hash, job_id, title, size_bytes)
+            self.cloud.add_private_feed_item(token_hash, job_id, title, size_bytes, user_id)
             return
         path = self.settings.data_dir / "private_feeds.json"
         feeds = self._read_local_feeds(path)

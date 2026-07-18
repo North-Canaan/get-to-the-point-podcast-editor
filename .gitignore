@@ -10,4 +10,5 @@ data/
 tmp/
 .vercel/
 .vercel
+node_modules/
 supabase/.temp/

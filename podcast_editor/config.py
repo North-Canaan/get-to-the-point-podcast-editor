@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_service_role_key: str | None = None
     supabase_bucket: str = "podcast-artifacts"
+    better_auth_url: str | None = None
+    better_auth_secret: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
