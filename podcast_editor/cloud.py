@@ -33,10 +33,10 @@ class SupabaseClient:
 
     @property
     def headers(self) -> dict[str, str]:
-        return {
-            "apikey": self.service_role_key,
-            "Authorization": f"Bearer {self.service_role_key}",
-        }
+        headers = {"apikey": self.service_role_key}
+        if not self.service_role_key.startswith("sb_"):
+            headers["Authorization"] = f"Bearer {self.service_role_key}"
+        return headers
 
     def upsert_job(
         self,
