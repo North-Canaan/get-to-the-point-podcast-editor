@@ -14,7 +14,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .auth import current_user, personal_feed_token
+from .auth import current_user, optional_current_user, personal_feed_token
 from .jobs import JobStore, new_job_id, validate_job_id
 from .pipeline.no_worker import advance_no_worker_job, submit_no_worker_job
 from .pipeline.ingest import IngestError, list_feed_episodes
@@ -58,7 +58,7 @@ INDEX_FALLBACK_HTML = """<!doctype html>
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Get To The Point Podcast Editor","applicationCategory":"MultimediaApplication","operatingSystem":"Web","description":"Podcast highlight editor that transcribes episodes, suggests high-signal moments, and produces a human-selected audio edit.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
   </head>
   <body>
-    <header class="site-header"><nav class="nav" aria-label="Primary"><a class="brand" href="/">Get To The Point</a><div class="nav-links"><a href="/how-it-works">How it works</a><a href="/faq">FAQ</a><a href="/review.html">Review app</a></div></nav></header>
+    <header class="site-header"><nav class="nav" aria-label="Primary"><a class="brand" href="/">Get To The Point</a><div class="nav-links"><a href="/how-it-works">How it works</a><a href="/faq">FAQ</a><a href="/review.html">Review app</a><a class="account-cta" data-auth-link href="/auth.html">Sign in to save progress</a></div></nav></header>
     <main>
       <section class="hero">
         <div>
@@ -127,7 +127,7 @@ def sitemap() -> FileResponse:
 
 @app.post("/jobs", response_model=CreateJobResponse)
 def create_job(payload: CreateJobRequest, request: Request) -> CreateJobResponse:
-    user = current_user(request, settings) if settings.better_auth_url else None
+    user = optional_current_user(request, settings)
     job_id = new_job_id()
     store.set_status(
         job_id,
@@ -326,7 +326,7 @@ def add_job_to_private_feed(
     output = store.artifact_path(job_id, "output")
     size_bytes = output.stat().st_size if output.exists() else int(job_record.get("output_size_bytes") or 0)
     title = str(input_payload.get("episode_title") or "Edited episode")
-    user = current_user(request, settings) if settings.better_auth_url else None
+    user = optional_current_user(request, settings)
     token = personal_feed_token(user["id"], settings) if user else payload.token
     store.add_private_feed_item(token, job_id, title, size_bytes, user["id"] if user else None)
     return JSONResponse({"ok": True, "feed_url": f"/private-feed/{token}.xml"})

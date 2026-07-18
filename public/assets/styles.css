@@ -92,6 +92,23 @@ a {
   color: #fff;
 }
 
+.nav-links .account-cta {
+  min-height: 44px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 680;
+  display: inline-flex;
+  align-items: center;
+}
+
+.nav-links .account-cta:hover,
+.nav-links .account-cta:focus-visible {
+  background: var(--accent-dark);
+  color: #fff;
+}
+
 .hero {
   max-width: 1120px;
   margin: 0 auto;

@@ -36,6 +36,16 @@ def current_user(request: Request, settings: Settings) -> dict:
     return user
 
 
+def optional_current_user(request: Request, settings: Settings) -> dict | None:
+    """Return the signed-in user without making authentication a prerequisite."""
+    if not settings.better_auth_url:
+        return None
+    try:
+        return current_user(request, settings)
+    except HTTPException:
+        return None
+
+
 def personal_feed_token(user_id: str, settings: Settings) -> str:
     if not settings.better_auth_secret:
         raise HTTPException(status_code=503, detail="Personal feeds are not configured")

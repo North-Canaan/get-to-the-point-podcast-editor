@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from podcast_editor.config import Settings
 from podcast_editor.jobs import JobStore, new_job_id
@@ -22,9 +23,53 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
     assert "/jobs/{job_id}/output-complete" in route_paths
 
 
+def test_anonymous_user_can_start_episode_when_auth_is_configured(
+    monkeypatch, tmp_path: Path
+) -> None:
+    test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    monkeypatch.setattr(main_module, "store", test_store)
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(
+            data_dir=tmp_path,
+            state_backend="filesystem",
+            better_auth_url="https://auth.example.test",
+        ),
+    )
+    monkeypatch.setattr(
+        "podcast_editor.auth.current_user",
+        lambda *_args: (_ for _ in ()).throw(HTTPException(status_code=401)),
+    )
+    monkeypatch.setattr(main_module, "submit_no_worker_job", lambda *_args: {})
+
+    response = TestClient(app).post(
+        "/jobs",
+        json={"url": "https://cdn.example.test/episode.mp3", "title": "Anonymous edit"},
+    )
+
+    assert response.status_code == 200
+    job = test_store.get_job_record(response.json()["job_id"])
+    assert job is None
+    assert test_store.get_status(response.json()["job_id"]).status == JobStatus.queued
+
+
 def test_private_feed_serves_only_attached_edited_episode(monkeypatch, tmp_path: Path) -> None:
     test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
     monkeypatch.setattr(main_module, "store", test_store)
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(
+            data_dir=tmp_path,
+            state_backend="filesystem",
+            better_auth_url="https://auth.example.test",
+        ),
+    )
+    monkeypatch.setattr(
+        "podcast_editor.auth.current_user",
+        lambda *_args: (_ for _ in ()).throw(HTTPException(status_code=401)),
+    )
     job_id = new_job_id()
     token = "private_feed_token_abcdefghijklmnopqrstuvwxyz"
     test_store.write_json(job_id, "input", {"episode_title": "A useful conversation"})

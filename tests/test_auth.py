@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from podcast_editor.auth import current_user, personal_feed_token
+from podcast_editor.auth import current_user, optional_current_user, personal_feed_token
 from podcast_editor.config import Settings
 
 
@@ -59,6 +59,22 @@ def test_current_user_rejects_missing_session(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("podcast_editor.auth.httpx.Client", FakeClient)
     response = TestClient(app).get("/protected")
     assert response.status_code == 401
+
+
+def test_optional_current_user_allows_missing_session(tmp_path, monkeypatch) -> None:
+    settings = Settings(data_dir=tmp_path, better_auth_url="https://example.test")
+    app = FastAPI()
+
+    @app.get("/optional")
+    def optional(request: Request):
+        return {"user": optional_current_user(request, settings)}
+
+    FakeClient.response = Response(200, json=None)
+    monkeypatch.setattr("podcast_editor.auth.httpx.Client", FakeClient)
+    response = TestClient(app).get("/optional")
+
+    assert response.status_code == 200
+    assert response.json() == {"user": None}
 
 
 def test_personal_feed_token_is_stable_and_user_specific(tmp_path) -> None:
