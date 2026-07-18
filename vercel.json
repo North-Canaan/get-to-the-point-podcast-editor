@@ -17,10 +17,6 @@
     {
       "source": "/faq",
       "destination": "/faq.html"
-    },
-    {
-      "source": "/jobs/:job_id/review",
-      "destination": "/review.html"
     }
   ],
   "headers": [

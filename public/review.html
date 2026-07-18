@@ -78,9 +78,10 @@
       const FADE_SECONDS = 0.02;
 
       const pathMatch = location.pathname.match(/\/jobs\/([^/]+)\/review/);
-      if (pathMatch) {
-        document.querySelector("#job-id").value = pathMatch[1];
-        loadJob(pathMatch[1]);
+      const requestedJobId = pathMatch?.[1] || new URLSearchParams(location.search).get("job_id");
+      if (requestedJobId) {
+        document.querySelector("#job-id").value = requestedJobId;
+        loadJob(requestedJobId);
       } else {
         document.querySelector("#manual-controls").hidden = false;
         document.querySelector("#review-title").textContent = "Load an editing job";

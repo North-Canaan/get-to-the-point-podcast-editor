@@ -157,12 +157,12 @@ def job_state(job_id: str) -> StateResponse:
 
 
 @app.get("/jobs/{job_id}/review", include_in_schema=False)
-def review_html(job_id: str) -> FileResponse:
+def review_html(job_id: str) -> RedirectResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
-    response = public_file("review.html")
+    response = RedirectResponse(f"/review.html?job_id={job_id}", status_code=307)
     response.headers["X-Robots-Tag"] = "noindex, nofollow"
     return response
 
