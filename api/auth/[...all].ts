@@ -1,7 +1,9 @@
 import { auth } from "../../auth.js";
 
-export default {
-  fetch(request: Request) {
-    return auth.handler(request);
-  },
-};
+export function GET(request: Request) {
+  return auth.handler(request);
+}
+
+export function POST(request: Request) {
+  return auth.handler(request);
+}
