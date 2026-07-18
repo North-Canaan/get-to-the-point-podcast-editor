@@ -8,6 +8,12 @@
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="/">Get To The Point</a>
+        <div class="nav-links"><a class="home-button" href="/">Home</a></div>
+      </nav>
+    </header>
     <main class="app-shell">
       <section class="toolbar" aria-labelledby="review-title">
         <div class="review-heading">
@@ -41,11 +47,10 @@
       <div class="audio-wrap" id="audio-wrap" hidden>
         <audio id="audio" controls preload="metadata"></audio>
       </div>
-      <section class="role-bar" id="role-bar" aria-label="Speaker roles" hidden></section>
       <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates" hidden></section>
       <div class="actions" id="produce-actions" hidden>
-        <button class="button" id="produce" disabled type="button">Produce edit</button>
-        <a class="button secondary" id="output-link" hidden>Open output</a>
+        <button class="button" id="produce" disabled type="button">Create final MP3</button>
+        <a class="button secondary" id="output-link" hidden>Download final MP3</a>
       </div>
       <pre id="produce-log" style="white-space: pre-wrap"></pre>
     </main>
@@ -55,7 +60,6 @@
 
       const state = {
         jobId: "",
-        roles: {},
         highlights: [],
         decisions: new Map(),
         stopTimer: null,
@@ -68,7 +72,6 @@
       const episodeTitle = document.querySelector("#episode-title");
       const audioWrap = document.querySelector("#audio-wrap");
       const produceActions = document.querySelector("#produce-actions");
-      const roleBar = document.querySelector("#role-bar");
       const list = document.querySelector("#highlight-list");
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
@@ -134,7 +137,7 @@
             syncProduce();
             return;
           }
-          setStatus("Producing edit in this browser...");
+          setStatus("Creating the final MP3 in this browser...");
           const blob = await spliceInBrowser(`/jobs/${state.jobId}/audio`, approved);
           setStatus("Uploading output...");
           const form = new FormData();
@@ -148,11 +151,11 @@
           }
           outputLink.href = `/jobs/${state.jobId}/output`;
           outputLink.hidden = false;
-          setStatus("Done. Output is ready.");
+          setStatus("Final MP3 is ready to download.");
         } catch (error) {
           console.error(error);
           appendProduceLog(`ERROR: ${error && error.stack ? error.stack : error}`);
-          setStatus("Produce failed. See log below.");
+          setStatus("MP3 creation failed. See the details below.");
         } finally {
           syncProduce();
         }
@@ -180,18 +183,15 @@
           state.pollTimer = window.setTimeout(() => loadJob(jobId), 10000);
         }
         if (!payload.highlights) {
-          roleBar.innerHTML = "";
           list.innerHTML = "";
           return;
         }
         audio.src = `/jobs/${jobId}/audio`;
         audioWrap.hidden = false;
-        roleBar.hidden = false;
         list.hidden = false;
         produceActions.hidden = false;
         processingState.classList.add("ready");
         document.querySelector("#review-title").textContent = "Review suggested highlights";
-        state.roles = payload.highlights.roles || {};
         state.highlights = [...payload.highlights.highlights].sort((a, b) => b.score - a.score);
         state.decisions.clear();
         state.highlights.forEach((item) => {
@@ -201,7 +201,6 @@
             end: item.end
           });
         });
-        renderRoles();
         renderHighlights();
         syncProduce();
       }
@@ -213,7 +212,7 @@
           detecting_highlights: ["Finding the strongest moments…", "The transcript is ready and highlight suggestions are being created."],
           needs_review: ["Highlights are ready.", "Approve, reject, reorder, or adjust the suggested clips below."],
           splicing: ["Edit saved.", "The final audio is being prepared in this browser."],
-          done: ["Your edited episode is ready.", "Open or download the finished MP3."],
+          done: ["Your final MP3 is ready.", "Download the finished audio file below."],
           error: ["We could not process this episode.", payload.error || "Please choose the episode again or try another feed."]
         };
         const message = messages[payload.status] || ["Processing episode…", "This page will update automatically."];
@@ -226,29 +225,6 @@
         }
       }
 
-      function renderRoles() {
-        roleBar.innerHTML = "";
-        Object.entries(state.roles).forEach(([speaker, role]) => {
-          const wrapper = document.createElement("label");
-          wrapper.className = "role-control";
-          wrapper.textContent = speaker;
-          const select = document.createElement("select");
-          ["host", "guest", "other"].forEach((value) => {
-            const option = document.createElement("option");
-            option.value = value;
-            option.textContent = value;
-            option.selected = value === role;
-            select.append(option);
-          });
-          select.addEventListener("change", () => {
-            state.roles[speaker] = select.value;
-            renderHighlights();
-          });
-          wrapper.append(select);
-          roleBar.append(wrapper);
-        });
-      }
-
       function renderHighlights() {
         list.innerHTML = "";
         state.highlights.forEach((item) => {
@@ -259,8 +235,6 @@
             <div>
               <div class="highlight-meta">
                 <span>${formatTime(item.start)}-${formatTime(item.end)}</span>
-                <span>${item.speaker} (${state.roles[item.speaker] || "other"})</span>
-                <span>Score ${item.score}</span>
               </div>
               <p class="reason">${escapeHtml(item.reason)}</p>
               <p class="highlight-text">${escapeHtml(item.text || "")}</p>
@@ -280,16 +254,7 @@
           const reject = toggleButton("Reject", "reject", item.id);
           toggles.append(approve, reject);
 
-          const nudge = document.createElement("div");
-          nudge.className = "nudge";
-          const start = numberInput(decision.start, (value) => {
-            decision.start = value;
-          });
-          const end = numberInput(decision.end, (value) => {
-            decision.end = value;
-          });
-          nudge.append(start, end);
-          actions.append(play, toggles, nudge);
+          actions.append(play, toggles);
           row.append(actions);
           list.append(row);
         });
@@ -307,15 +272,6 @@
           syncProduce();
         });
         return button;
-      }
-
-      function numberInput(value, onChange) {
-        const input = document.createElement("input");
-        input.type = "number";
-        input.step = "0.1";
-        input.value = Number(value).toFixed(1);
-        input.addEventListener("change", () => onChange(input.value));
-        return input;
       }
 
       function playSegment(start, end) {

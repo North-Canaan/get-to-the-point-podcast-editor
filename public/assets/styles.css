@@ -66,6 +66,20 @@ a {
   font-size: 0.96rem;
 }
 
+.nav-links .home-button {
+  padding: 7px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent-dark);
+  font-weight: 680;
+}
+
+.nav-links .home-button:hover,
+.nav-links .home-button:focus-visible {
+  background: var(--accent);
+  color: #fff;
+}
+
 .hero {
   max-width: 1120px;
   margin: 0 auto;
@@ -376,7 +390,6 @@ main section {
 }
 
 .toolbar,
-.role-bar,
 .highlight-row {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -461,27 +474,6 @@ main section {
   border-radius: 6px;
 }
 
-.role-bar {
-  margin: 16px 0;
-  padding: 14px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.role-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.role-control select,
-.nudge input {
-  min-height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 5px 8px;
-}
 
 .audio-wrap {
   margin: 16px 0;
@@ -552,12 +544,6 @@ audio {
 .toggle-group button.active.reject {
   border-color: var(--danger);
   color: var(--danger);
-}
-
-.nudge {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
 }
 
 .status {
