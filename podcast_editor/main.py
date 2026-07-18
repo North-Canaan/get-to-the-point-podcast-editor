@@ -45,31 +45,31 @@ INDEX_FALLBACK_HTML = """<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Get To The Point Podcast Editor | Hebrew Podcast Highlight Editing</title>
-    <meta name="description" content="Turn long Hebrew interview podcasts into human-approved highlight edits with transcription, diarization, Claude highlight detection, and precise MP3 splicing." />
+    <title>Get To The Point | Podcast Highlight Editor</title>
+    <meta name="description" content="Turn long podcast episodes into concise, human-selected edited episodes with transcription, speaker detection, and AI-assisted highlight discovery." />
     <link rel="canonical" href="https://get-to-the-point-podcast-editor.vercel.app/" />
     <meta property="og:title" content="Get To The Point Podcast Editor" />
-    <meta property="og:description" content="A Hebrew-first podcast highlight editor for turning long interviews into concise edited audio cuts." />
+    <meta property="og:description" content="A podcast highlight editor for turning long episodes into concise edited audio cuts." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://get-to-the-point-podcast-editor.vercel.app/" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="stylesheet" href="/assets/styles.css" />
-    <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Get To The Point Podcast Editor","applicationCategory":"MultimediaApplication","operatingSystem":"Web","description":"Hebrew-first podcast highlight editor that transcribes, diarizes, suggests guest-focused highlights, and produces a human-approved MP3 edit.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Get To The Point Podcast Editor","applicationCategory":"MultimediaApplication","operatingSystem":"Web","description":"Podcast highlight editor that transcribes episodes, suggests high-signal moments, and produces a human-selected audio edit.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
   </head>
   <body>
     <header class="site-header"><nav class="nav" aria-label="Primary"><a class="brand" href="/">Get To The Point</a><div class="nav-links"><a href="/how-it-works">How it works</a><a href="/faq">FAQ</a><a href="/review.html">Review app</a></div></nav></header>
     <main>
       <section class="hero">
         <div>
-          <h1>Hebrew Podcast Highlight Editor</h1>
-          <p>Get To The Point turns long Hebrew interview episodes into concise, high-signal highlight cuts. The system automates transcription, diarization, and candidate discovery, while a human editor makes the final decisions.</p>
+          <h1>Podcast Highlight Editor</h1>
+          <p>Get To The Point turns long podcast episodes into concise, high-signal highlight cuts. The system automates transcription, diarization, and candidate discovery, while a human editor makes the final decisions.</p>
           <div class="actions"><a class="button" href="/review.html">Open review app</a><a class="button secondary" href="/how-it-works">See the pipeline</a></div>
         </div>
         <div class="waveform" aria-label="Audio editing waveform illustration"><div class="wave-bars" aria-hidden="true"><span style="height:34%"></span><span style="height:62%"></span><span style="height:88%"></span><span style="height:52%"></span><span style="height:74%"></span><span style="height:42%"></span><span style="height:96%"></span><span style="height:58%"></span><span style="height:46%"></span><span style="height:82%"></span><span style="height:66%"></span><span style="height:36%"></span></div></div>
       </section>
-      <section><div class="section-inner"><h2>Built for Hebrew interviews</h2><div class="grid"><article class="card"><h3>Hebrew transcription</h3><p>AssemblyAI produces Hebrew transcripts with speaker diarization and timestamps for accurate review and editing.</p></article><article class="card"><h3>Speaker-aware highlights</h3><p>Diarization keeps speakers separate, and Claude infers host and guest roles from conversational behavior rather than hardcoded labels.</p></article><article class="card"><h3>Human approval</h3><p>The editor can approve, reject, reorder, and tighten highlight boundaries before the final MP3 is produced in the browser.</p></article></div></div></section>
+      <section><div class="section-inner"><h2>Turn long episodes into the moments that matter</h2><div class="grid"><article class="card"><h3>Timestamped transcription</h3><p>AssemblyAI produces transcripts with speaker diarization and timestamps for accurate review and editing.</p></article><article class="card"><h3>Speaker-aware highlights</h3><p>Diarization keeps speakers separate, and Claude infers host and guest roles from conversational behavior rather than hardcoded labels.</p></article><article class="card"><h3>Your selection</h3><p>Select the moments you want, preview them, and create an edited episode directly from the original audio.</p></article></div></div></section>
     </main>
-    <footer class="site-footer">Podcast editing software for Hebrew interview workflows.</footer>
+    <footer class="site-footer">Podcast editing software for finding and sharing the moments that matter.</footer>
   </body>
 </html>"""
 

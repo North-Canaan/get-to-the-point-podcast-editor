@@ -349,7 +349,7 @@
       function renderJobStatus(payload) {
         const messages = {
           queued: ["Starting episode…", "Submitting the audio for transcription."],
-          transcribing: ["Transcribing the episode…", "Hebrew transcription and speaker detection can take several minutes."],
+          transcribing: ["Transcribing the episode…", "Transcription and speaker detection can take several minutes."],
           detecting_highlights: ["Finding the strongest moments…", "The transcript is ready and highlight suggestions are being created."],
           needs_review: ["Highlights are ready.", "Select the moments to include in your edited episode."],
           splicing: ["The edited episode is not finished.", "Select highlights and choose Create edited episode to try again."],
@@ -359,7 +359,7 @@
         const message = messages[payload.status] || ["Processing episode…", "This page will update automatically."];
         const activeDetails = {
           queued: (elapsed) => `Submitting the source audio for transcription · ${elapsed} elapsed`,
-          transcribing: (elapsed) => `Creating the Hebrew transcript, then preparing its highlights. Status is checked every 10 seconds · ${elapsed} elapsed`,
+          transcribing: (elapsed) => `Creating the transcript, then preparing its highlights. Status is checked every 10 seconds · ${elapsed} elapsed`,
           detecting_highlights: (elapsed) => `The transcript is ready. AI is finding topics and strong moments · ${elapsed} elapsed`
         };
         if (activeDetails[payload.status]) {

@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>How The Hebrew Podcast Highlight Pipeline Works | Get To The Point</title>
+    <title>How Podcast Highlight Editing Works | Get To The Point</title>
     <meta
       name="description"
-      content="Learn how Get To The Point ingests podcast feeds, transcribes Hebrew audio, finds highlights, and creates a selected edited episode."
+      content="Learn how Get To The Point ingests podcast feeds, transcribes audio, finds highlights, and creates a selected edited episode."
     />
     <link rel="canonical" href="https://get-to-the-point-podcast-editor.vercel.app/how-it-works" />
     <link rel="stylesheet" href="/assets/styles.css" />
@@ -14,11 +14,11 @@
       {
         "@context": "https://schema.org",
         "@type": "HowTo",
-        "name": "How to create a Hebrew podcast highlight edit",
-        "description": "A five-stage workflow for turning a long Hebrew podcast interview into a selected edited episode.",
+        "name": "How to create a podcast highlight edit",
+        "description": "A five-stage workflow for turning a long podcast episode into a selected edited episode.",
         "step": [
           { "@type": "HowToStep", "name": "Submit a podcast URL" },
-          { "@type": "HowToStep", "name": "Transcribe and diarize Hebrew audio" },
+          { "@type": "HowToStep", "name": "Transcribe and diarize the audio" },
           { "@type": "HowToStep", "name": "Detect guest-focused highlights" },
           { "@type": "HowToStep", "name": "Review and select segments" },
           { "@type": "HowToStep", "name": "Create the edited episode" }
@@ -40,9 +40,9 @@
     </header>
     <main>
       <section class="section-inner">
-        <h1>How the Hebrew podcast highlight editor works</h1>
+        <h1>How the podcast highlight editor works</h1>
         <p>
-          The workflow is designed for long Hebrew interview podcasts where the final editorial
+          The workflow is designed for long podcast episodes where the final editorial
           judgment belongs to a person. Automation prepares the options; the human chooses the cut.
         </p>
         <div class="steps">
@@ -59,7 +59,7 @@
             <div>
               <h2>Transcribe and diarize</h2>
               <p>
-                The resolved audio URL is submitted to AssemblyAI for Hebrew transcription,
+                The resolved audio URL is submitted to AssemblyAI for transcription,
                 diarization, and timestamped speaker-turn segments.
               </p>
             </div>
@@ -68,8 +68,8 @@
             <div>
               <h2>Find highlight candidates</h2>
               <p>
-                Claude reads the diarized Hebrew transcript, infers host and guest roles, and
-                proposes guest-centered highlights with Hebrew reasons and score values.
+                Claude reads the diarized transcript, follows the episode’s conversation, and
+                proposes high-signal highlights for review.
               </p>
             </div>
           </article>
@@ -93,6 +93,6 @@
         </div>
       </section>
     </main>
-    <footer class="site-footer">Built for Hebrew-first audio editing workflows.</footer>
+    <footer class="site-footer">Built for human-guided podcast editing workflows.</footer>
   </body>
 </html>
