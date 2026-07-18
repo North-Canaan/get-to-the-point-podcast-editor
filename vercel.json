@@ -1,6 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
+    "api/**/*.ts": {
+      "includeFiles": "certs/prod-ca-2021.crt"
+    },
     "podcast_editor/**/*.py": {
       "maxDuration": 300,
       "excludeFiles": "{tests/**,data/**,supabase/**,scripts/**,**/__pycache__/**,**/*.pyc}"
