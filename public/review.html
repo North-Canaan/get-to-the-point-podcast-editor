@@ -41,6 +41,9 @@
           <div>
             <strong id="status">Loading episode…</strong>
             <p id="status-detail">This page will update automatically.</p>
+            <div class="work-progress" id="work-progress" hidden role="progressbar" aria-label="Edited episode progress" aria-valuemin="0" aria-valuemax="100">
+              <span id="work-progress-bar"></span>
+            </div>
           </div>
         </div>
       </section>
@@ -95,6 +98,8 @@
         decisions: new Map(),
         producing: false,
         feedToken: "",
+        progressBase: 0,
+        progressSpan: 0,
         stopTimer: null,
         pollTimer: null
       };
@@ -102,6 +107,8 @@
       const statusEl = document.querySelector("#status");
       const statusDetail = document.querySelector("#status-detail");
       const processingState = document.querySelector("#processing-state");
+      const workProgress = document.querySelector("#work-progress");
+      const workProgressBar = document.querySelector("#work-progress-bar");
       const episodeTitle = document.querySelector("#episode-title");
       const audioWrap = document.querySelector("#audio-wrap");
       const highlightControls = document.querySelector("#highlight-controls");
@@ -205,7 +212,7 @@
               const decision = state.decisions.get(item.id);
               return { start: Number(decision.start), end: Number(decision.end) };
             });
-          setStatus("Saving review decisions...");
+          setWorkingStatus("Starting your edited episode…", "Saving your highlight choices.", 2);
           const response = await fetch(`/jobs/${state.jobId}/review`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -217,16 +224,17 @@
             syncActions();
             return;
           }
-          setStatus("Creating the edited episode in this browser...");
+          setWorkingStatus("Preparing the audio editor…", "Loading the tools needed to create your episode.", 5);
           const blob = await spliceInBrowser(`/jobs/${state.jobId}/audio`, approved);
-          setStatus("Saving the edited episode...");
+          setWorkingStatus("Saving your edited episode…", "Uploading the finished audio securely.", 96);
           await uploadOutput(blob);
           await revealOutput();
           setStatus("Your edited episode is ready to download.");
+          processingState.classList.add("ready");
         } catch (error) {
           console.error(error);
           appendProduceLog(`ERROR: ${error && error.stack ? error.stack : error}`);
-          setStatus("Edited episode creation failed. See the details below.");
+          setStatus("Edited episode creation failed.", "Open Technical details for more information.", "error");
         } finally {
           state.producing = false;
           syncActions();
@@ -316,7 +324,7 @@
           transcribing: ["Transcribing the episode…", "Hebrew transcription and speaker detection can take several minutes."],
           detecting_highlights: ["Finding the strongest moments…", "The transcript is ready and highlight suggestions are being created."],
           needs_review: ["Highlights are ready.", "Approve or reject the suggested clips below."],
-          splicing: ["Edit saved.", "The final audio is being prepared in this browser."],
+          splicing: ["The edited episode is not finished.", "Approve the highlights and choose Create edited episode to try again."],
           done: ["Your edited episode is ready.", "Download the finished episode below."],
           error: ["We could not process this episode.", payload.error || "Please choose the episode again or try another feed."]
         };
@@ -467,6 +475,23 @@
         statusEl.textContent = value;
         statusDetail.textContent = detail;
         processingState.classList.toggle("error", tone === "error");
+        workProgress.hidden = true;
+      }
+
+      function setWorkingStatus(value, detail, percent = null) {
+        statusEl.textContent = value;
+        statusDetail.textContent = detail;
+        processingState.classList.remove("ready", "error");
+        workProgress.hidden = false;
+        if (percent === null) {
+          workProgress.removeAttribute("aria-valuenow");
+          workProgress.classList.add("indeterminate");
+          return;
+        }
+        const bounded = Math.max(0, Math.min(100, percent));
+        workProgress.classList.remove("indeterminate");
+        workProgress.setAttribute("aria-valuenow", String(Math.round(bounded)));
+        workProgressBar.style.width = `${bounded}%`;
       }
 
       function formatTime(seconds) {
@@ -487,7 +512,11 @@
         const ffmpeg = new FFmpeg();
         ffmpeg.on("log", ({ message }) => appendProduceLog(message));
         ffmpeg.on("progress", ({ progress }) => {
-          setStatus(`ffmpeg progress ${(progress * 100).toFixed(1)}%`);
+          setWorkingStatus(
+            statusEl.textContent,
+            statusDetail.textContent,
+            state.progressBase + Math.max(0, Math.min(1, progress)) * state.progressSpan
+          );
         });
 
         const classWorkerURL = await moduleWorkerBlobURL(
@@ -504,11 +533,13 @@
         await ffmpeg.load({ classWorkerURL, coreURL, wasmURL });
 
         appendProduceLog("Downloading source audio...");
+        setWorkingStatus("Downloading the source episode…", "This is usually the longest download step.", 10);
         const audioBytes = await fetchWithProgress(audioUrl, (loaded, total) => {
           const label = total
             ? `${formatBytes(loaded)} / ${formatBytes(total)}`
             : `${formatBytes(loaded)}`;
-          setStatus(`Downloading source audio: ${label}`);
+          const percent = total ? 10 + (loaded / total) * 20 : null;
+          setWorkingStatus("Downloading the source episode…", label, percent);
         });
         await ffmpeg.writeFile("input.mp3", audioBytes);
 
@@ -520,7 +551,13 @@
           const fadeOutStart = Math.max(0, duration - FADE_SECONDS);
           const name = `clip_${String(index).padStart(3, "0")}.mp3`;
           clipNames.push(name);
-          setStatus(`Extracting clip ${index + 1}/${orderedSegments.length}...`);
+          state.progressBase = 30 + (index / orderedSegments.length) * 55;
+          state.progressSpan = 55 / orderedSegments.length;
+          setWorkingStatus(
+            "Creating your edited episode…",
+            `Processing highlight ${index + 1} of ${orderedSegments.length}.`,
+            state.progressBase
+          );
           await ffmpeg.exec([
             "-ss",
             start.toFixed(3),
@@ -542,7 +579,9 @@
           "concat.txt",
           new TextEncoder().encode(clipNames.map((name) => `file '${name}'`).join("\n") + "\n")
         );
-        setStatus("Concatenating output...");
+        state.progressBase = 85;
+        state.progressSpan = 10;
+        setWorkingStatus("Assembling the edited episode…", "Joining the approved highlights.", 85);
         await ffmpeg.exec([
           "-f",
           "concat",

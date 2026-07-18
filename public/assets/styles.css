@@ -448,6 +448,39 @@ main section {
   color: var(--muted);
 }
 
+.processing-state > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.work-progress {
+  width: 100%;
+  height: 8px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.16);
+}
+
+.work-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.work-progress.indeterminate span {
+  width: 35%;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(310%); }
+}
+
 .processing-state.error {
   background: #fff1f0;
   color: var(--danger);
