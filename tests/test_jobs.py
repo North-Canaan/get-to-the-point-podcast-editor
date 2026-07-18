@@ -23,3 +23,17 @@ def test_job_store_status_round_trip(tmp_path: Path) -> None:
     store.set_status(job_id, JobStatus.transcribing)
 
     assert store.get_status(job_id).status == JobStatus.transcribing
+
+
+def test_feed_library_upserts_and_searches(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, state_backend="filesystem")
+    store = JobStore(settings)
+
+    store.save_feed("https://example.com/feed.xml", "A Great Podcast", 12)
+    store.save_feed("https://example.com/feed.xml", "A Great Podcast", 13)
+    store.save_feed("https://other.example/rss", "Another Show", 4)
+
+    assert len(store.list_feeds()) == 2
+    result = store.list_feeds("great")
+    assert len(result) == 1
+    assert result[0]["episode_count"] == 13

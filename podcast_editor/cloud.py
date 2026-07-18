@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -178,3 +179,28 @@ class SupabaseClient:
             if signed_url.startswith("http"):
                 return signed_url
             return f"{self.url}/storage/v1{signed_url}"
+
+    def upsert_feed(self, url: str, title: str, episode_count: int) -> None:
+        headers = {
+            **self.headers,
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates",
+        }
+        payload = {"url": url, "title": title, "episode_count": episode_count}
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{self.url}/rest/v1/feeds?on_conflict=url", headers=headers, json=payload
+            )
+            response.raise_for_status()
+
+    def list_feeds(self, query: str = "") -> list[dict[str, Any]]:
+        endpoint = f"{self.url}/rest/v1/feeds?select=url,title,episode_count,updated_at"
+        needle = query.strip()
+        if needle:
+            pattern = quote(f"*{needle}*", safe="*")
+            endpoint += f"&or=(title.ilike.{pattern},url.ilike.{pattern})"
+        endpoint += "&order=updated_at.desc&limit=100"
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(endpoint, headers=self.headers)
+            response.raise_for_status()
+            return response.json()

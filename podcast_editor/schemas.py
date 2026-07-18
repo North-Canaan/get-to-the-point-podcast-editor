@@ -23,6 +23,34 @@ class CreateJobResponse(BaseModel):
     job_id: str
 
 
+class FeedRequest(BaseModel):
+    url: str = Field(min_length=1)
+
+
+class FeedEpisode(BaseModel):
+    title: str
+    audio_url: str
+    published: str | None = None
+    description: str | None = None
+    duration: str | None = None
+
+
+class FeedEpisodesResponse(BaseModel):
+    title: str
+    episodes: list[FeedEpisode]
+
+
+class SavedFeed(BaseModel):
+    url: str
+    title: str
+    episode_count: int = 0
+    updated_at: str | None = None
+
+
+class FeedLibraryResponse(BaseModel):
+    feeds: list[SavedFeed]
+
+
 class StatusRecord(BaseModel):
     job_id: str
     status: JobStatus

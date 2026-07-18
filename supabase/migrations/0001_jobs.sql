@@ -57,6 +57,28 @@ for all
 using (auth.role() = 'service_role')
 with check (auth.role() = 'service_role');
 
+create table if not exists public.feeds (
+  url text primary key,
+  title text not null,
+  episode_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists feeds_set_updated_at on public.feeds;
+create trigger feeds_set_updated_at
+before update on public.feeds
+for each row execute function public.set_updated_at();
+
+alter table public.feeds enable row level security;
+
+drop policy if exists "service role owns feeds" on public.feeds;
+create policy "service role owns feeds"
+on public.feeds
+for all
+using (auth.role() = 'service_role')
+with check (auth.role() = 'service_role');
+
 insert into storage.buckets (id, name, public)
 values ('podcast-artifacts', 'podcast-artifacts', false)
 on conflict (id) do nothing;

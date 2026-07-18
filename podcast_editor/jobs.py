@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -123,3 +124,41 @@ class JobStore:
         if not payload:
             return StatusRecord(job_id=job_id, status=JobStatus.queued)
         return StatusRecord.model_validate(payload)
+
+    def save_feed(self, url: str, title: str, episode_count: int) -> None:
+        if self.cloud:
+            self.cloud.upsert_feed(url, title, episode_count)
+            return
+        path = self.settings.data_dir / "feeds.json"
+        feeds = self._read_local_feeds(path)
+        feeds[url] = {
+            "url": url,
+            "title": title,
+            "episode_count": episode_count,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        path.write_text(json.dumps(feeds, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def list_feeds(self, query: str = "") -> list[dict]:
+        if self.cloud:
+            return self.cloud.list_feeds(query)
+        feeds = list(self._read_local_feeds(self.settings.data_dir / "feeds.json").values())
+        needle = query.casefold().strip()
+        if needle:
+            feeds = [
+                feed
+                for feed in feeds
+                if needle in str(feed.get("title", "")).casefold()
+                or needle in str(feed.get("url", "")).casefold()
+            ]
+        return sorted(feeds, key=lambda feed: str(feed.get("updated_at", "")), reverse=True)
+
+    @staticmethod
+    def _read_local_feeds(path: Path) -> dict[str, dict]:
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except (json.JSONDecodeError, OSError):
+            return {}

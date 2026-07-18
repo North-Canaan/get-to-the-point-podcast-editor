@@ -16,6 +16,51 @@ class IngestError(RuntimeError):
     pass
 
 
+def list_feed_episodes(source_url: str) -> dict:
+    try:
+        with httpx.Client(follow_redirects=True, timeout=20.0) as client:
+            response = client.get(source_url)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise IngestError(f"could not fetch RSS feed: {exc}") from exc
+
+    parsed = feedparser.parse(response.content)
+    if getattr(parsed, "bozo", False) and not parsed.entries:
+        raise IngestError("the URL did not return a valid RSS feed")
+
+    episodes = []
+    for entry in parsed.entries:
+        audio_url = _entry_audio_url(entry)
+        if not audio_url:
+            continue
+        episodes.append(
+            {
+                "title": str(entry.get("title") or "Untitled episode"),
+                "audio_url": audio_url,
+                "published": entry.get("published") or entry.get("updated"),
+                "description": entry.get("summary"),
+                "duration": entry.get("itunes_duration"),
+            }
+        )
+
+    if not episodes:
+        raise IngestError("no podcast episodes with audio enclosures were found")
+    return {
+        "title": str(parsed.feed.get("title") or "Podcast feed"),
+        "episodes": episodes,
+    }
+
+
+def _entry_audio_url(entry: dict) -> str | None:
+    for enclosure in getattr(entry, "enclosures", []) or []:
+        if enclosure.get("href"):
+            return str(enclosure["href"])
+    for link in getattr(entry, "links", []) or []:
+        if link.get("rel") == "enclosure" and link.get("href"):
+            return str(link["href"])
+    return None
+
+
 def ingest(job_id: str, source_url: str, store: JobStore) -> dict:
     resolved_url = resolve_audio_url(source_url)
     original_path = download_audio(job_id, resolved_url, store)
@@ -58,17 +103,7 @@ def maybe_resolve_feed(source_url: str) -> str | None:
     if not parsed.entries:
         return None
 
-    entry = parsed.entries[0]
-    enclosures = getattr(entry, "enclosures", []) or []
-    for enclosure in enclosures:
-        href = enclosure.get("href")
-        if href:
-            return href
-    links = getattr(entry, "links", []) or []
-    for link in links:
-        if link.get("rel") == "enclosure" and link.get("href"):
-            return link["href"]
-    return None
+    return _entry_audio_url(parsed.entries[0])
 
 
 def ytdlp_extract_audio_url(source_url: str) -> str:

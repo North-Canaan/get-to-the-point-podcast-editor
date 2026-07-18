@@ -67,6 +67,8 @@ using the Supabase backend.
 
 ## API
 
+- `POST /feeds/episodes` with `{ "url": "https://example.com/feed.xml" }`
+- `GET /feeds?query=search` (search the saved feed library)
 - `POST /jobs` with `{ "url": "..." }`
 - `GET /jobs/{job_id}/state`
 - `GET /jobs/{job_id}/audio`

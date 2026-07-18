@@ -39,6 +39,7 @@
       <nav class="nav" aria-label="Primary">
         <a class="brand" href="/">Get To The Point</a>
         <div class="nav-links">
+          <a href="#feed-form">Add RSS feed</a>
           <a href="/how-it-works">How it works</a>
           <a href="/faq">FAQ</a>
           <a href="/review.html">Review app</a>
@@ -54,10 +55,19 @@
             highlight cuts. The system automates transcription, diarization, and candidate
             discovery, while a human editor makes the final decisions.
           </p>
-          <div class="actions">
-            <a class="button" href="/review.html">Open review app</a>
-            <a class="button secondary" href="/how-it-works">See the pipeline</a>
-          </div>
+          <form id="feed-form" class="feed-form" aria-labelledby="add-feed-title">
+            <div class="feed-form-heading">
+              <span class="feed-step">Start here</span>
+              <h2 id="add-feed-title">Add a podcast RSS feed</h2>
+              <p>Paste the show’s RSS address to see its episodes and save it to your library.</p>
+            </div>
+            <label for="feed-url">RSS feed URL</label>
+            <div class="feed-input-row">
+              <input id="feed-url" type="url" required placeholder="https://example.com/podcast.rss" />
+              <button class="button" type="submit">Add feed &amp; choose episode</button>
+            </div>
+            <p id="feed-status" class="feed-status" aria-live="polite"></p>
+          </form>
         </div>
         <div class="waveform" aria-label="Audio editing waveform illustration">
           <div class="wave-bars" aria-hidden="true">
@@ -68,6 +78,25 @@
             <span style="height: 46%"></span><span style="height: 82%"></span>
             <span style="height: 66%"></span><span style="height: 36%"></span>
           </div>
+        </div>
+      </section>
+      <section id="library-section">
+        <div class="section-inner">
+          <div class="library-heading">
+            <div>
+              <h2>Podcast library</h2>
+              <p>Feeds you add are saved here for quick access.</p>
+            </div>
+            <input id="library-search" type="search" placeholder="Search saved podcasts" />
+          </div>
+          <div id="feed-library" class="feed-library"></div>
+          <p id="library-status" class="feed-status" aria-live="polite"></p>
+        </div>
+      </section>
+      <section id="episode-section" hidden>
+        <div class="section-inner">
+          <h2 id="feed-title">Choose an episode</h2>
+          <div id="episode-list" class="episode-list"></div>
         </div>
       </section>
       <section>
@@ -100,5 +129,119 @@
       </section>
     </main>
     <footer class="site-footer">Podcast editing software for Hebrew interview workflows.</footer>
+    <script>
+      const form = document.querySelector("#feed-form");
+      const status = document.querySelector("#feed-status");
+      const section = document.querySelector("#episode-section");
+      const list = document.querySelector("#episode-list");
+      const title = document.querySelector("#feed-title");
+      const library = document.querySelector("#feed-library");
+      const librarySearch = document.querySelector("#library-search");
+      const libraryStatus = document.querySelector("#library-status");
+
+      function text(value) {
+        const node = document.createElement("span");
+        node.textContent = value || "";
+        return node;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await loadEpisodes(document.querySelector("#feed-url").value);
+      });
+
+      async function loadEpisodes(feedUrl) {
+        status.textContent = "Loading episodes…";
+        section.hidden = true;
+        try {
+          const response = await fetch("/feeds/episodes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: feedUrl }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || "Could not load this feed");
+          title.textContent = `Choose an episode from ${data.title}`;
+          list.replaceChildren();
+          data.episodes.forEach((episode) => {
+            const row = document.createElement("article");
+            row.className = "episode-row";
+            const details = document.createElement("div");
+            const heading = document.createElement("h3");
+            heading.append(text(episode.title));
+            const meta = document.createElement("p");
+            meta.textContent = [episode.published, episode.duration].filter(Boolean).join(" · ");
+            details.append(heading, meta);
+            const button = document.createElement("button");
+            button.className = "button";
+            button.textContent = "Edit episode";
+            button.addEventListener("click", () => createJob(episode.audio_url, button));
+            row.append(details, button);
+            list.append(row);
+          });
+          status.textContent = `${data.episodes.length} episodes found.`;
+          section.hidden = false;
+          section.scrollIntoView({ behavior: "smooth" });
+          loadLibrary(librarySearch.value);
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      }
+
+      async function loadLibrary(query = "") {
+        libraryStatus.textContent = "Loading library…";
+        try {
+          const response = await fetch(`/feeds?query=${encodeURIComponent(query)}`);
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || "Could not load the library");
+          library.replaceChildren();
+          data.feeds.forEach((feed) => {
+            const button = document.createElement("button");
+            button.className = "saved-feed";
+            button.type = "button";
+            const name = document.createElement("strong");
+            name.textContent = feed.title;
+            const count = document.createElement("span");
+            count.textContent = `${feed.episode_count} episodes`;
+            button.append(name, count);
+            button.addEventListener("click", () => {
+              document.querySelector("#feed-url").value = feed.url;
+              loadEpisodes(feed.url);
+            });
+            library.append(button);
+          });
+          libraryStatus.textContent = data.feeds.length ? "" : "No saved podcasts found.";
+        } catch (error) {
+          libraryStatus.textContent = error.message;
+        }
+      }
+
+      let searchTimer;
+      librarySearch.addEventListener("input", () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => loadLibrary(librarySearch.value), 250);
+      });
+
+      loadLibrary();
+
+      async function createJob(audioUrl, button) {
+        button.disabled = true;
+        button.textContent = "Starting…";
+        try {
+          const response = await fetch("/jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: audioUrl }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || "Could not start the job");
+          window.location.href = `/jobs/${data.job_id}/review`;
+        } catch (error) {
+          status.textContent = error.message;
+          button.disabled = false;
+          button.textContent = "Edit episode";
+        }
+      }
+    </script>
   </body>
 </html>

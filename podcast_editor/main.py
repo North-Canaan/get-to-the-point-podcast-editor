@@ -14,9 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .jobs import JobStore, new_job_id, validate_job_id
 from .pipeline.no_worker import advance_no_worker_job, submit_no_worker_job
+from .pipeline.ingest import IngestError, list_feed_episodes
 from .schemas import (
     CreateJobRequest,
     CreateJobResponse,
+    FeedEpisodesResponse,
+    FeedLibraryResponse,
+    FeedRequest,
     JobStatus,
     ReviewRequest,
     StateResponse,
@@ -113,6 +117,21 @@ def create_job(request: CreateJobRequest) -> CreateJobResponse:
     except Exception as exc:
         store.set_status(job_id, JobStatus.error, error=str(exc), source_url=request.url)
     return CreateJobResponse(job_id=job_id)
+
+
+@app.post("/feeds/episodes", response_model=FeedEpisodesResponse)
+def feed_episodes(request: FeedRequest) -> FeedEpisodesResponse:
+    try:
+        result = FeedEpisodesResponse.model_validate(list_feed_episodes(request.url))
+        store.save_feed(request.url, result.title, len(result.episodes))
+        return result
+    except IngestError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/feeds", response_model=FeedLibraryResponse)
+def feeds(query: str = "") -> FeedLibraryResponse:
+    return FeedLibraryResponse(feeds=store.list_feeds(query))
 
 
 @app.get("/jobs/{job_id}/state", response_model=StateResponse)
