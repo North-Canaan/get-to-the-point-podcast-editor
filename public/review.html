@@ -41,7 +41,7 @@
           <div>
             <strong id="status">Loading episode…</strong>
             <p id="status-detail">This page will update automatically.</p>
-            <div class="work-progress" id="work-progress" hidden role="progressbar" aria-label="Edited episode progress" aria-valuemin="0" aria-valuemax="100">
+            <div class="work-progress" id="work-progress" hidden role="progressbar" aria-label="Task progress" aria-valuemin="0" aria-valuemax="100">
               <span id="work-progress-bar"></span>
             </div>
           </div>
@@ -102,6 +102,8 @@
         progressBase: 0,
         progressSpan: 0,
         progressTimer: null,
+        progressKey: "",
+        progressStartedAt: 0,
         stopTimer: null,
         pollTimer: null
       };
@@ -254,6 +256,7 @@
       });
 
       async function loadJob(jobId) {
+        const isNewJob = state.jobId !== jobId;
         state.jobId = jobId;
         state.highlights = [];
         state.decisions.clear();
@@ -262,7 +265,13 @@
         outputLink.hidden = true;
         listeningCard.hidden = true;
         syncActions();
-        setStatus("Loading episode…", "Checking the processing status.");
+        if (isNewJob || !state.progressKey.startsWith("pipeline:")) {
+          startElapsedStatus(
+            "Loading your episode…",
+            (elapsed) => `Checking its processing status · ${elapsed} elapsed`,
+            `loading:${jobId}`
+          );
+        }
         const response = await fetch(`/jobs/${jobId}/state`);
         if (!response.ok) {
           if (response.status === 404) {
@@ -341,7 +350,16 @@
           error: ["We could not process this episode.", payload.error || "Please choose the episode again or try another feed."]
         };
         const message = messages[payload.status] || ["Processing episode…", "This page will update automatically."];
-        setStatus(message[0], message[1], payload.status === "error" ? "error" : "");
+        const activeDetails = {
+          queued: (elapsed) => `Submitting the source audio for transcription · ${elapsed} elapsed`,
+          transcribing: (elapsed) => `Creating the Hebrew transcript, then preparing its highlights. Status is checked every 10 seconds · ${elapsed} elapsed`,
+          detecting_highlights: (elapsed) => `The transcript is ready. AI is finding topics and strong moments · ${elapsed} elapsed`
+        };
+        if (activeDetails[payload.status]) {
+          startElapsedStatus(message[0], activeDetails[payload.status], `pipeline:${payload.status}`);
+        } else {
+          setStatus(message[0], message[1], payload.status === "error" ? "error" : "");
+        }
         if (payload.status === "done") {
           revealOutput();
           processingState.classList.add("ready");
@@ -430,6 +448,8 @@
         outputLink.hidden = false;
         editedEpisode.src = outputUrl;
         listeningCard.hidden = false;
+        privateFeedUrl.value = "Preparing your private feed…";
+        copyFeedUrl.disabled = true;
         syncActions();
         try {
           const token = getPrivateFeedToken();
@@ -441,9 +461,11 @@
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.detail || "Private feed could not be created");
           privateFeedUrl.value = new URL(payload.feed_url, location.origin).href;
+          copyFeedUrl.disabled = false;
         } catch (error) {
           console.error(error);
           privateFeedUrl.value = "Private feed unavailable. Please reload and try again.";
+          copyFeedUrl.disabled = true;
         }
       }
 
@@ -454,11 +476,8 @@
           const uploadBody = new FormData();
           uploadBody.append("cacheControl", "3600");
           uploadBody.append("", blob, "output.mp3");
-          const upload = await fetch(uploadUrl, {
-            method: "PUT",
-            body: uploadBody
-          });
-          if (!upload.ok) throw new Error(`Audio storage upload failed: ${upload.status}`);
+          await uploadWithProgress(uploadUrl, uploadBody);
+          setWorkingStatus("Finalizing your edited episode…", "Confirming the saved audio.", 99);
           const complete = await fetch(`/jobs/${state.jobId}/output-complete`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -491,6 +510,7 @@
       }
 
       function setStatus(value, detail = "", tone = "") {
+        stopElapsedProgress();
         statusEl.textContent = value;
         statusDetail.textContent = detail;
         processingState.classList.toggle("error", tone === "error");
@@ -514,20 +534,28 @@
       }
 
       function startHighlightProgress(topic, minutes) {
-        stopElapsedProgress();
-        const startedAt = Date.now();
         const scope = topic ? `the topic “${topic}”` : "the whole episode";
-        const update = () => {
-          const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
-          const elapsed = formatElapsed(elapsedSeconds);
+        startElapsedStatus(
+          "Finding your highlights…",
+          (elapsed, elapsedSeconds) => {
           let reassurance = "The AI is reading the saved transcript.";
           if (elapsedSeconds >= 30) reassurance = "The AI is still comparing and ranking relevant moments.";
           if (elapsedSeconds >= 90) reassurance = "Long episodes can take a few minutes; the request is still active.";
-          setWorkingStatus(
-            "Finding your highlights…",
-            `${reassurance} Looking at ${scope} for a ${minutes}-minute edit · ${elapsed} elapsed`,
-            null
-          );
+          return `${reassurance} Looking at ${scope} for a ${minutes}-minute edit · ${elapsed} elapsed`;
+          },
+          `highlight:${topic}:${minutes}`
+        );
+      }
+
+      function startElapsedStatus(title, detailBuilder, key) {
+        if (state.progressKey !== key) {
+          state.progressKey = key;
+          state.progressStartedAt = Date.now();
+        }
+        if (state.progressTimer) window.clearInterval(state.progressTimer);
+        const update = () => {
+          const elapsedSeconds = Math.floor((Date.now() - state.progressStartedAt) / 1000);
+          setWorkingStatus(title, detailBuilder(formatElapsed(elapsedSeconds), elapsedSeconds), null);
         };
         update();
         state.progressTimer = window.setInterval(update, 1000);
@@ -536,6 +564,8 @@
       function stopElapsedProgress() {
         if (state.progressTimer) window.clearInterval(state.progressTimer);
         state.progressTimer = null;
+        state.progressKey = "";
+        state.progressStartedAt = 0;
       }
 
       function formatElapsed(totalSeconds) {
@@ -683,6 +713,26 @@
           offset += chunk.byteLength;
         }
         return output;
+      }
+
+      function uploadWithProgress(url, body) {
+        return new Promise((resolve, reject) => {
+          const request = new XMLHttpRequest();
+          request.open("PUT", url);
+          request.upload.addEventListener("progress", (event) => {
+            const label = event.lengthComputable
+              ? `${formatBytes(event.loaded)} / ${formatBytes(event.total)}`
+              : formatBytes(event.loaded);
+            const percent = event.lengthComputable ? 96 + (event.loaded / event.total) * 3 : null;
+            setWorkingStatus("Saving your edited episode…", label, percent);
+          });
+          request.addEventListener("load", () => {
+            if (request.status >= 200 && request.status < 300) resolve();
+            else reject(new Error(`Audio storage upload failed: ${request.status}`));
+          });
+          request.addEventListener("error", () => reject(new Error("Audio storage upload failed")));
+          request.send(body);
+        });
       }
 
       async function moduleWorkerBlobURL(url) {

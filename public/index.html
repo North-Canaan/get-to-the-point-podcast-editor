@@ -68,6 +68,7 @@
               <button class="button" type="submit">Add feed &amp; choose episode</button>
             </div>
             <p id="feed-status" class="feed-status" aria-live="polite"></p>
+            <div class="feed-progress indeterminate" id="feed-progress" hidden role="progressbar" aria-label="Podcast loading progress"><span></span></div>
           </form>
         </div>
         <div class="waveform" aria-label="Audio editing waveform illustration">
@@ -139,6 +140,9 @@
       const library = document.querySelector("#feed-library");
       const librarySearch = document.querySelector("#library-search");
       const libraryStatus = document.querySelector("#library-status");
+      const feedProgress = document.querySelector("#feed-progress");
+      const feedSubmit = form.querySelector('button[type="submit"]');
+      let activityTimer;
 
       function text(value) {
         const node = document.createElement("span");
@@ -148,11 +152,17 @@
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        await loadEpisodes(document.querySelector("#feed-url").value);
+        await loadEpisodes(document.querySelector("#feed-url").value, feedSubmit);
       });
 
-      async function loadEpisodes(feedUrl) {
-        status.textContent = "Loading episodes…";
+      async function loadEpisodes(feedUrl, triggerButton = null) {
+        if (triggerButton) triggerButton.disabled = true;
+        startActivity((elapsed, seconds) => {
+          const detail = seconds < 15
+            ? "Reading the RSS feed and finding its episodes"
+            : "Still waiting for the podcast host to respond";
+          return `${detail} · ${elapsed} elapsed`;
+        });
         section.hidden = true;
         try {
           const response = await fetch("/feeds/episodes", {
@@ -186,6 +196,11 @@
           loadLibrary(librarySearch.value);
         } catch (error) {
           status.textContent = error.message;
+        } finally {
+          stopActivity();
+          if (triggerButton) {
+            triggerButton.disabled = false;
+          }
         }
       }
 
@@ -207,7 +222,7 @@
             button.append(name, count);
             button.addEventListener("click", () => {
               document.querySelector("#feed-url").value = feed.url;
-              loadEpisodes(feed.url);
+              loadEpisodes(feed.url, button);
             });
             library.append(button);
           });
@@ -227,7 +242,15 @@
 
       async function createJob(episode, button) {
         button.disabled = true;
-        button.textContent = "Starting…";
+        const startedAt = Date.now();
+        const updateStarting = () => {
+          const elapsed = formatElapsed(Math.floor((Date.now() - startedAt) / 1000));
+          button.textContent = `Starting… ${elapsed}`;
+          status.textContent = `Checking saved work and starting transcription · ${elapsed} elapsed`;
+          feedProgress.hidden = false;
+        };
+        updateStarting();
+        activityTimer = window.setInterval(updateStarting, 1000);
         try {
           const response = await fetch("/jobs", {
             method: "POST",
@@ -241,7 +264,32 @@
           status.textContent = error.message;
           button.disabled = false;
           button.textContent = "Edit episode";
+          stopActivity();
         }
+      }
+
+      function startActivity(messageBuilder) {
+        stopActivity();
+        const startedAt = Date.now();
+        const update = () => {
+          const seconds = Math.floor((Date.now() - startedAt) / 1000);
+          status.textContent = messageBuilder(formatElapsed(seconds), seconds);
+          feedProgress.hidden = false;
+        };
+        update();
+        activityTimer = window.setInterval(update, 1000);
+      }
+
+      function stopActivity() {
+        if (activityTimer) window.clearInterval(activityTimer);
+        activityTimer = null;
+        feedProgress.hidden = true;
+      }
+
+      function formatElapsed(totalSeconds) {
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = String(totalSeconds % 60).padStart(2, "0");
+        return `${minutes}:${seconds}`;
       }
     </script>
   </body>

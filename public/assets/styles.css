@@ -212,6 +212,23 @@ a {
   color: var(--muted);
 }
 
+.feed-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.16);
+}
+
+.feed-progress span {
+  display: block;
+  width: 35%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+
 .episode-list {
   display: grid;
   gap: 10px;
