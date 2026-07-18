@@ -86,6 +86,19 @@ class SupabaseClient:
             rows = response.json()
             return rows[0] if rows else None
 
+    def find_jobs_by_audio_url(self, audio_url: str, limit: int = 5) -> list[dict[str, Any]]:
+        encoded_url = quote(audio_url, safe="")
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(
+                f"{self.url}/rest/v1/jobs"
+                f"?resolved_audio_url=eq.{encoded_url}"
+                f"&select=id,status,updated_at"
+                f"&order=updated_at.desc&limit={limit}",
+                headers=self.headers,
+            )
+            response.raise_for_status()
+            return response.json()
+
     def claim_job(
         self,
         job_id: str,

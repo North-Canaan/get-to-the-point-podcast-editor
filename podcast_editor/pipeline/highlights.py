@@ -25,6 +25,8 @@ Write every "reason" field in Hebrew. Return ONLY valid JSON, no preamble, no ma
 }
 ```"""
 
+MAX_HIGHLIGHT_RESPONSE_TOKENS = 4000
+
 
 def detect_highlights(job_id: str, store: JobStore, settings: Settings) -> dict:
     transcript = store.read_json(job_id, "transcript")
@@ -59,7 +61,7 @@ def call_claude(
         content = f"{reminder}\n\n{content}"
     message = client.messages.create(
         model=model,
-        max_tokens=12000,
+        max_tokens=MAX_HIGHLIGHT_RESPONSE_TOKENS,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
     )

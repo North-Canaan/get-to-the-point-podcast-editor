@@ -53,3 +53,43 @@ def test_submit_job_preserves_selected_episode_title(monkeypatch, tmp_path: Path
 
     assert payload["episode_title"] == "Selected Episode"
     assert store.get_status(job_id).status == JobStatus.transcribing
+
+
+def test_detecting_highlights_status_is_resumable(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, state_backend="filesystem")
+    store = JobStore(settings)
+    job_id = new_job_id()
+    store.set_status(job_id, JobStatus.detecting_highlights)
+    called = []
+    monkeypatch.setattr(no_worker, "detect_highlights", lambda *args: called.append(args))
+
+    no_worker.advance_no_worker_job(job_id, store, settings)
+
+    assert len(called) == 1
+    assert store.get_status(job_id).status == JobStatus.needs_review
+
+
+def test_submit_reuses_cached_transcript_without_assemblyai(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, state_backend="filesystem")
+    store = JobStore(settings)
+    job_id = new_job_id()
+    transcript = {"duration": 30.0, "segments": []}
+    monkeypatch.setattr(no_worker, "resolve_audio_url", lambda url: url)
+    monkeypatch.setattr(
+        store,
+        "find_cached_transcript",
+        lambda url: (transcript, "11111111-1111-4111-8111-111111111111"),
+    )
+
+    payload = no_worker.submit_no_worker_job(
+        job_id,
+        "https://cdn.example.com/episode.mp3",
+        store,
+        settings,
+        "Previously Transcribed",
+    )
+
+    assert payload["provider"] == "assemblyai_cached"
+    assert payload["transcript_reused_from"] == "11111111-1111-4111-8111-111111111111"
+    assert store.read_json(job_id, "transcript") == transcript
+    assert store.get_status(job_id).status == JobStatus.detecting_highlights

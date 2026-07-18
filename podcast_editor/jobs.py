@@ -125,6 +125,16 @@ class JobStore:
             return StatusRecord(job_id=job_id, status=JobStatus.queued)
         return StatusRecord.model_validate(payload)
 
+    def find_cached_transcript(self, audio_url: str) -> tuple[dict, str] | None:
+        if not self.cloud:
+            return None
+        for job in self.cloud.find_jobs_by_audio_url(audio_url):
+            source_job_id = str(job["id"])
+            transcript = self.cloud.download_json_artifact(source_job_id, "transcript.json")
+            if transcript:
+                return transcript, source_job_id
+        return None
+
     def save_feed(self, url: str, title: str, episode_count: int) -> None:
         if self.cloud:
             self.cloud.upsert_feed(url, title, episode_count)

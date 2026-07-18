@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from podcast_editor.pipeline.highlights import call_claude, enrich_highlights, parse_json_response
+from podcast_editor.pipeline.highlights import (
+    MAX_HIGHLIGHT_RESPONSE_TOKENS,
+    call_claude,
+    enrich_highlights,
+    parse_json_response,
+)
 
 
 def test_parse_json_response_strips_code_fences() -> None:
@@ -57,3 +62,4 @@ def test_call_claude_avoids_deprecated_temperature_parameter() -> None:
     call_claude(client, "claude-test", {"segments": []})
 
     assert "temperature" not in captured
+    assert captured["max_tokens"] == MAX_HIGHLIGHT_RESPONSE_TOKENS

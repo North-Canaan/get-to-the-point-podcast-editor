@@ -19,11 +19,31 @@ def submit_no_worker_job(
     settings: Settings,
     episode_title: str | None = None,
 ) -> dict:
+    resolved_url = resolve_audio_url(source_url)
+    cached = store.find_cached_transcript(resolved_url)
+    if cached:
+        transcript, source_job_id = cached
+        input_payload = {
+            "source_url": source_url,
+            "resolved_audio_url": resolved_url,
+            "provider": "assemblyai_cached",
+            "episode_title": episode_title,
+            "transcript_reused_from": source_job_id,
+        }
+        store.write_json(job_id, "input", input_payload)
+        store.write_json(job_id, "transcript", transcript)
+        store.set_status(
+            job_id,
+            JobStatus.detecting_highlights,
+            source_url=source_url,
+            extra={"resolved_audio_url": resolved_url},
+        )
+        return input_payload
+
     if not settings.assemblyai_api_key:
         store.set_status(job_id, JobStatus.error, error="ASSEMBLYAI_API_KEY is required")
         raise RuntimeError("ASSEMBLYAI_API_KEY is required")
 
-    resolved_url = resolve_audio_url(source_url)
     transcript_id = submit_assemblyai_transcript(settings.assemblyai_api_key, resolved_url)
     input_payload = {
         "source_url": source_url,
@@ -47,6 +67,9 @@ def submit_no_worker_job(
 
 def advance_no_worker_job(job_id: str, store: JobStore, settings: Settings) -> None:
     status = store.get_status(job_id)
+    if status.status == JobStatus.detecting_highlights:
+        finish_highlight_detection(job_id, store, settings)
+        return
     if status.status != JobStatus.transcribing:
         return
     input_payload = store.read_json(job_id, "input") or {}
@@ -75,6 +98,10 @@ def advance_no_worker_job(job_id: str, store: JobStore, settings: Settings) -> N
     transcript = collapse_assemblyai_utterances(assembly)
     store.write_json(job_id, "transcript", transcript)
     store.set_status(job_id, JobStatus.detecting_highlights)
+    finish_highlight_detection(job_id, store, settings)
+
+
+def finish_highlight_detection(job_id: str, store: JobStore, settings: Settings) -> None:
     try:
         detect_highlights(job_id, store, settings)
     except Exception as exc:

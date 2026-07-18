@@ -45,6 +45,7 @@
       <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates" hidden></section>
       <div class="actions" id="produce-actions" hidden>
         <button class="button" id="produce" disabled type="button">Produce edit</button>
+        <a class="button secondary" id="transcript-link" hidden>Download transcript</a>
         <a class="button secondary" id="output-link" hidden>Open output</a>
       </div>
       <pre id="produce-log" style="white-space: pre-wrap"></pre>
@@ -73,6 +74,7 @@
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
       const outputLink = document.querySelector("#output-link");
+      const transcriptLink = document.querySelector("#transcript-link");
       const produceLog = document.querySelector("#produce-log");
       const PADDING_SECONDS = 0.3;
       const FADE_SECONDS = 0.02;
@@ -162,6 +164,7 @@
         state.jobId = jobId;
         window.clearTimeout(state.pollTimer);
         outputLink.hidden = true;
+        transcriptLink.hidden = true;
         setStatus("Loading episode…", "Checking the processing status.");
         const response = await fetch(`/jobs/${jobId}/state`);
         if (!response.ok) {
@@ -175,6 +178,11 @@
         }
         const payload = await response.json();
         if (payload.episode_title) episodeTitle.textContent = payload.episode_title;
+        if (payload.transcript) {
+          transcriptLink.href = `/jobs/${jobId}/transcript`;
+          transcriptLink.hidden = false;
+          produceActions.hidden = false;
+        }
         renderJobStatus(payload);
         if (["queued", "transcribing", "detecting_highlights"].includes(payload.status)) {
           state.pollTimer = window.setTimeout(() => loadJob(jobId), 10000);
