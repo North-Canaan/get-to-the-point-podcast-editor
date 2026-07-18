@@ -3,7 +3,6 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
-    HTMLResponse,
     JSONResponse,
     RedirectResponse,
     Response,
@@ -80,7 +79,7 @@ def home() -> Response:
     path = PUBLIC_DIR / "index.html"
     if path.exists():
         return FileResponse(path)
-    return HTMLResponse(INDEX_FALLBACK_HTML)
+    return RedirectResponse("/index.html", status_code=307)
 
 
 @app.get("/how-it-works", include_in_schema=False)
