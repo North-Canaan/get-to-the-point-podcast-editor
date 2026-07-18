@@ -67,6 +67,7 @@
       </section>
       <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates" hidden></section>
       <div class="actions" id="produce-actions" hidden>
+        <span class="selection-count" id="selection-count" aria-live="polite"></span>
         <button class="button" id="produce" hidden type="button">Create edited episode</button>
         <a class="button secondary" id="output-link" hidden>Download edited episode</a>
       </div>
@@ -116,6 +117,7 @@
       const targetMinutes = document.querySelector("#target-minutes");
       const updateHighlights = document.querySelector("#update-highlights");
       const produceActions = document.querySelector("#produce-actions");
+      const selectionCount = document.querySelector("#selection-count");
       const list = document.querySelector("#highlight-list");
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
@@ -189,7 +191,7 @@
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.detail || "Could not find highlights");
           applyHighlights(payload);
-          setStatus("Highlights are ready.", "Approve or reject the suggested clips below.");
+          setStatus("Highlights are ready.", "Select the moments to include in your edited episode.");
         } catch (error) {
           outputLink.hidden = !previousOutputReady;
           if (previousOutputReady) revealOutput();
@@ -323,8 +325,8 @@
           queued: ["Starting episode…", "Submitting the audio for transcription."],
           transcribing: ["Transcribing the episode…", "Hebrew transcription and speaker detection can take several minutes."],
           detecting_highlights: ["Finding the strongest moments…", "The transcript is ready and highlight suggestions are being created."],
-          needs_review: ["Highlights are ready.", "Approve or reject the suggested clips below."],
-          splicing: ["The edited episode is not finished.", "Approve the highlights and choose Create edited episode to try again."],
+          needs_review: ["Highlights are ready.", "Select the moments to include in your edited episode."],
+          splicing: ["The edited episode is not finished.", "Select highlights and choose Create edited episode to try again."],
           done: ["Your edited episode is ready.", "Download the finished episode below."],
           error: ["We could not process this episode.", payload.error || "Please choose the episode again or try another feed."]
         };
@@ -341,14 +343,18 @@
         state.highlights.forEach((item) => {
           const decision = state.decisions.get(item.id);
           const row = document.createElement("article");
-          row.className = "highlight-row";
+          row.className = `highlight-row ${decision.decision === "approve" ? "selected" : ""} ${decision.decision === "reject" ? "rejected" : ""}`;
           row.innerHTML = `
-            <div>
+            <div class="highlight-content">
               <div class="highlight-meta">
-                <span>${formatTime(item.start)}-${formatTime(item.end)}</span>
+                <span>${formatTime(item.start)}–${formatTime(item.end)}</span>
+                <span>${formatDuration(item.end - item.start)}</span>
               </div>
               <p class="reason">${escapeHtml(item.reason)}</p>
-              <p class="highlight-text">${escapeHtml(item.text || "")}</p>
+              <details class="highlight-transcript">
+                <summary>Show transcript</summary>
+                <p class="highlight-text">${escapeHtml(item.text || "")}</p>
+              </details>
             </div>
           `;
           const actions = document.createElement("div");
@@ -361,11 +367,11 @@
 
           const toggles = document.createElement("div");
           toggles.className = "toggle-group";
-          const approve = toggleButton("Approve", "approve", item.id);
+          const approve = toggleButton("Select", "approve", item.id);
           const reject = toggleButton("Reject", "reject", item.id);
           toggles.append(approve, reject);
 
-          actions.append(play, toggles);
+          actions.append(toggles, play);
           row.append(actions);
           list.append(row);
         });
@@ -376,6 +382,7 @@
         button.type = "button";
         button.textContent = label;
         button.className = `${value} ${state.decisions.get(id).decision === value ? "active" : ""}`;
+        button.setAttribute("aria-pressed", String(state.decisions.get(id).decision === value));
         button.addEventListener("click", () => {
           const current = state.decisions.get(id);
           current.decision = current.decision === value ? "" : value;
@@ -398,8 +405,10 @@
       }
 
       function syncActions() {
-        const hasApproval = [...state.decisions.values()].some((item) => item.decision === "approve");
+        const selectedTotal = [...state.decisions.values()].filter((item) => item.decision === "approve").length;
+        const hasApproval = selectedTotal > 0;
         const outputReady = !outputLink.hidden;
+        selectionCount.textContent = `${selectedTotal} ${selectedTotal === 1 ? "highlight" : "highlights"} selected`;
         produce.hidden = !hasApproval || outputReady;
         produce.disabled = state.producing;
         produceActions.hidden = produce.hidden && outputLink.hidden;
@@ -501,6 +510,14 @@
         return `${minutes}:${rest}`;
       }
 
+      function formatDuration(seconds) {
+        const rounded = Math.max(1, Math.round(seconds));
+        if (rounded < 60) return `${rounded} sec`;
+        const minutes = Math.floor(rounded / 60);
+        const rest = rounded % 60;
+        return rest ? `${minutes} min ${rest} sec` : `${minutes} min`;
+      }
+
       function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, (char) => {
           return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char];
@@ -581,7 +598,7 @@
         );
         state.progressBase = 85;
         state.progressSpan = 10;
-        setWorkingStatus("Assembling the edited episode…", "Joining the approved highlights.", 85);
+        setWorkingStatus("Assembling the edited episode…", "Joining the selected highlights.", 85);
         await ffmpeg.exec([
           "-f",
           "concat",

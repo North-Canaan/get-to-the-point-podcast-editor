@@ -6,7 +6,7 @@
     <title>How The Hebrew Podcast Highlight Pipeline Works | Get To The Point</title>
     <meta
       name="description"
-      content="Learn how Get To The Point ingests podcast URLs, transcribes Hebrew audio, detects guest-centered highlights, and splices approved MP3 segments."
+      content="Learn how Get To The Point ingests podcast feeds, transcribes Hebrew audio, finds highlights, and creates a selected edited episode."
     />
     <link rel="canonical" href="https://get-to-the-point-podcast-editor.vercel.app/how-it-works" />
     <link rel="stylesheet" href="/assets/styles.css" />
@@ -15,13 +15,13 @@
         "@context": "https://schema.org",
         "@type": "HowTo",
         "name": "How to create a Hebrew podcast highlight edit",
-        "description": "A five-stage workflow for turning a long Hebrew podcast interview into an approved MP3 highlight reel.",
+        "description": "A five-stage workflow for turning a long Hebrew podcast interview into a selected edited episode.",
         "step": [
           { "@type": "HowToStep", "name": "Submit a podcast URL" },
           { "@type": "HowToStep", "name": "Transcribe and diarize Hebrew audio" },
           { "@type": "HowToStep", "name": "Detect guest-focused highlights" },
-          { "@type": "HowToStep", "name": "Review and approve segments" },
-          { "@type": "HowToStep", "name": "Splice the final MP3" }
+          { "@type": "HowToStep", "name": "Review and select segments" },
+          { "@type": "HowToStep", "name": "Create the edited episode" }
         ]
       }
     </script>
@@ -75,19 +75,18 @@
           </article>
           <article class="step">
             <div>
-              <h2>Review the candidates</h2>
+              <h2>Review and select</h2>
               <p>
-                The editor plays each segment, corrects roles, approves or rejects suggestions, and
-                adjusts the start and end time of each approved highlight.
+                Preview each suggested moment, select the highlights to include, and reject the rest.
               </p>
             </div>
           </article>
           <article class="step">
             <div>
-              <h2>Produce the MP3</h2>
+              <h2>Create the edited episode</h2>
               <p>
-                The review page loads ffmpeg.wasm in the browser, pads each approved segment,
-                applies short fades, and exports a final ordered MP3 highlight edit.
+                The review page prepares each selected segment, applies short fades, and assembles
+                the finished episode in your browser.
               </p>
             </div>
           </article>
