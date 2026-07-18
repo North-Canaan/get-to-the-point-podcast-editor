@@ -7,6 +7,31 @@ from podcast_editor.pipeline.no_worker import collapse_assemblyai_utterances
 from podcast_editor.schemas import JobStatus
 
 
+class FakeAssemblyClient:
+    submitted = {}
+
+    def __init__(self, **_kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def post(self, _url, headers, json):
+        type(self).submitted = json
+        return FakeAssemblyResponse()
+
+
+class FakeAssemblyResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"id": "tx_language"}
+
+
 def test_collapse_assemblyai_utterances_maps_speakers_and_times() -> None:
     payload = {
         "id": "tx_123",
@@ -32,6 +57,15 @@ def test_collapse_assemblyai_utterances_maps_speakers_and_times() -> None:
     assert transcript["segments"][1]["speaker"] == "SPEAKER_B"
 
 
+def test_assemblyai_receives_feed_language_without_auto_detection(monkeypatch) -> None:
+    monkeypatch.setattr(no_worker.httpx, "Client", FakeAssemblyClient)
+    transcript_id = no_worker.submit_assemblyai_transcript("key", "https://audio.test/e.mp3", "fr")
+
+    assert transcript_id == "tx_language"
+    assert FakeAssemblyClient.submitted["language_code"] == "fr"
+    assert "language_detection" not in FakeAssemblyClient.submitted
+
+
 def test_submit_job_preserves_selected_episode_title(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(
         data_dir=tmp_path,
@@ -41,7 +75,9 @@ def test_submit_job_preserves_selected_episode_title(monkeypatch, tmp_path: Path
     store = JobStore(settings)
     job_id = new_job_id()
     monkeypatch.setattr(no_worker, "resolve_audio_url", lambda url: url)
-    monkeypatch.setattr(no_worker, "submit_assemblyai_transcript", lambda key, url: "tx_123")
+    monkeypatch.setattr(
+        no_worker, "submit_assemblyai_transcript", lambda key, url, language: "tx_123"
+    )
 
     payload = no_worker.submit_no_worker_job(
         job_id,
@@ -49,9 +85,11 @@ def test_submit_job_preserves_selected_episode_title(monkeypatch, tmp_path: Path
         store,
         settings,
         "Selected Episode",
+        "en",
     )
 
     assert payload["episode_title"] == "Selected Episode"
+    assert payload["language"] == "en"
     assert store.get_status(job_id).status == JobStatus.transcribing
 
 

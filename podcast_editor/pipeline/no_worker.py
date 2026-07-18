@@ -18,6 +18,7 @@ def submit_no_worker_job(
     store: JobStore,
     settings: Settings,
     episode_title: str | None = None,
+    language: str = "en",
 ) -> dict:
     resolved_url = resolve_audio_url(source_url)
     cached = store.find_cached_transcript(resolved_url)
@@ -28,6 +29,7 @@ def submit_no_worker_job(
             "resolved_audio_url": resolved_url,
             "provider": "assemblyai_cached",
             "episode_title": episode_title,
+            "language": language,
             "transcript_reused_from": source_job_id,
         }
         store.write_json(job_id, "input", input_payload)
@@ -46,13 +48,14 @@ def submit_no_worker_job(
         store.set_status(job_id, JobStatus.error, error="ASSEMBLYAI_API_KEY is required")
         raise RuntimeError("ASSEMBLYAI_API_KEY is required")
 
-    transcript_id = submit_assemblyai_transcript(settings.assemblyai_api_key, resolved_url)
+    transcript_id = submit_assemblyai_transcript(settings.assemblyai_api_key, resolved_url, language)
     input_payload = {
         "source_url": source_url,
         "resolved_audio_url": resolved_url,
         "assemblyai_transcript_id": transcript_id,
         "provider": "assemblyai",
         "episode_title": episode_title,
+        "language": language,
     }
     store.write_json(job_id, "input", input_payload)
     store.set_status(
@@ -149,10 +152,10 @@ def looks_like_feed_url(source_url: str) -> bool:
     return lower.endswith(".xml") or lower.endswith(".rss") or "feed" in lower or "rss" in lower
 
 
-def submit_assemblyai_transcript(api_key: str, audio_url: str) -> str:
+def submit_assemblyai_transcript(api_key: str, audio_url: str, language: str) -> str:
     payload = {
         "audio_url": audio_url,
-        "language_code": "he",
+        "language_code": language,
         "speaker_labels": True,
         "punctuate": True,
         "format_text": True,

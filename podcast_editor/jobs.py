@@ -147,7 +147,7 @@ class JobStore:
                 if highlights and selection == {
                     "topic": None,
                     "target_minutes": 15,
-                    "prompt_version": 2,
+                    "prompt_version": 3,
                 }:
                     return transcript, highlights, source_job_id
                 if transcript_only is None:

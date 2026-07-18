@@ -1,4 +1,5 @@
 import mimetypes
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -28,6 +29,7 @@ def list_feed_episodes(source_url: str) -> dict:
     if getattr(parsed, "bozo", False) and not parsed.entries:
         raise IngestError("the URL did not return a valid RSS feed")
 
+    language = normalize_feed_language(parsed.feed.get("language"))
     episodes = []
     for entry in parsed.entries:
         audio_url = _entry_audio_url(entry)
@@ -40,6 +42,7 @@ def list_feed_episodes(source_url: str) -> dict:
                 "published": entry.get("published") or entry.get("updated"),
                 "description": entry.get("summary"),
                 "duration": entry.get("itunes_duration"),
+                "language": language,
             }
         )
 
@@ -47,8 +50,33 @@ def list_feed_episodes(source_url: str) -> dict:
         raise IngestError("no podcast episodes with audio enclosures were found")
     return {
         "title": str(parsed.feed.get("title") or "Podcast feed"),
+        "language": language,
         "episodes": episodes,
     }
+
+
+def normalize_feed_language(value: object, fallback: str = "en") -> str:
+    raw = str(value or "").strip().lower().replace("_", "-")
+    if not raw:
+        return fallback
+    aliases = {
+        "eng": "en",
+        "heb": "he",
+        "iw": "he",
+        "deu": "de",
+        "ger": "de",
+        "fra": "fr",
+        "fre": "fr",
+        "spa": "es",
+        "ita": "it",
+        "por": "pt",
+        "nld": "nl",
+        "dut": "nl",
+        "ara": "ar",
+    }
+    primary = raw.split("-", 1)[0]
+    normalized = aliases.get(primary, primary)
+    return normalized if re.fullmatch(r"[a-z]{2,3}", normalized) else fallback
 
 
 def _entry_audio_url(entry: dict) -> str | None:

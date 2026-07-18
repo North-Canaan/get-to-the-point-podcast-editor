@@ -261,7 +261,7 @@
           const response = await fetch("/jobs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: episode.audio_url, title: episode.title }),
+            body: JSON.stringify({ url: episode.audio_url, title: episode.title, language: episode.language }),
           });
           const data = await response.json();
           if (!response.ok) throw new Error(data.detail || "Could not start the job");

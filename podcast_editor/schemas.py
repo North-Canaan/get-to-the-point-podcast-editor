@@ -18,6 +18,7 @@ class JobStatus(StrEnum):
 class CreateJobRequest(BaseModel):
     url: str = Field(min_length=1)
     title: str | None = None
+    language: str = Field(default="en", pattern=r"^[a-z]{2,3}$")
 
 
 class CreateJobResponse(BaseModel):
@@ -34,10 +35,12 @@ class FeedEpisode(BaseModel):
     published: str | None = None
     description: str | None = None
     duration: str | None = None
+    language: str
 
 
 class FeedEpisodesResponse(BaseModel):
     title: str
+    language: str
     episodes: list[FeedEpisode]
 
 

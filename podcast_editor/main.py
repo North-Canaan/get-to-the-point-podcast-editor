@@ -136,7 +136,7 @@ def create_job(payload: CreateJobRequest, request: Request) -> CreateJobResponse
         extra={"user_id": user["id"], "episode_title": payload.title} if user else None,
     )
     try:
-        submit_no_worker_job(job_id, payload.url, store, settings, payload.title)
+        submit_no_worker_job(job_id, payload.url, store, settings, payload.title, payload.language)
     except Exception as exc:
         store.set_status(job_id, JobStatus.error, error=str(exc), source_url=payload.url)
         raise HTTPException(status_code=502, detail=f"Could not start episode processing: {exc}") from exc
@@ -374,7 +374,6 @@ def private_feed(token: str, request: Request) -> Response:
         '<title>My Edited Episodes</title>'
         '<description>Private edited podcast episodes from Get To The Point.</description>'
         f'<link>{escape(feed_url)}</link><lastBuildDate>{now}</lastBuildDate>'
-        '<language>he</language>'
         f"{''.join(item_xml)}"
         '</channel></rss>'
     )

@@ -16,14 +16,17 @@ def transcribe_and_diarize(job_id: str, store: JobStore, settings: Settings) -> 
 
     audio_path = store.artifact_path(job_id, "audio16k")
     input_payload = store.read_json(job_id, "input") or {}
+    language = str(input_payload.get("language") or "en")
     device = settings.whisper_device
     compute_type = "float16" if device == "cuda" and torch.cuda.is_available() else "int8"
 
-    model = whisperx.load_model(settings.whisper_model, device, language="he", compute_type=compute_type)
+    model = whisperx.load_model(
+        settings.whisper_model, device, language=language, compute_type=compute_type
+    )
     audio = whisperx.load_audio(str(audio_path))
-    result = model.transcribe(audio, language="he")
+    result = model.transcribe(audio, language=language)
 
-    align_model, metadata = whisperx.load_align_model(language_code="he", device=device)
+    align_model, metadata = whisperx.load_align_model(language_code=language, device=device)
     aligned = whisperx.align(
         result["segments"],
         align_model,

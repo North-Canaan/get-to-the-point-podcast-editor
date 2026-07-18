@@ -46,7 +46,7 @@ def test_enrich_highlights_adds_ids_and_matching_text() -> None:
         {"start": 25.0, "end": 30.0, "text": "לא רלוונטי"},
     ]
 
-    selection = {"topic": "יזמות", "target_minutes": 10, "prompt_version": 2}
+    selection = {"topic": "יזמות", "target_minutes": 10, "prompt_version": 3}
     enriched = enrich_highlights(payload, transcript, selection)
 
     assert enriched["highlights"][0]["id"] == "h01"
