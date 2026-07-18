@@ -271,6 +271,10 @@
         audio.src = `/jobs/${jobId}/audio`;
         audioWrap.hidden = false;
         applyHighlights(payload.highlights);
+        if (payload.highlights.selection?.prompt_version !== 2) {
+          setStatus("Finding episode topics…", "Updating this older analysis from the saved transcript.");
+          updateHighlights.click();
+        }
       }
 
       function applyHighlights(payload) {
