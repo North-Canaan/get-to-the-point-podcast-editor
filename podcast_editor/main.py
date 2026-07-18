@@ -112,9 +112,10 @@ def create_job(request: CreateJobRequest) -> CreateJobResponse:
     job_id = new_job_id()
     store.set_status(job_id, JobStatus.queued, source_url=request.url)
     try:
-        submit_no_worker_job(job_id, request.url, store, settings)
+        submit_no_worker_job(job_id, request.url, store, settings, request.title)
     except Exception as exc:
         store.set_status(job_id, JobStatus.error, error=str(exc), source_url=request.url)
+        raise HTTPException(status_code=502, detail=f"Could not start episode processing: {exc}") from exc
     return CreateJobResponse(job_id=job_id)
 
 
@@ -144,10 +145,12 @@ def job_state(job_id: str) -> StateResponse:
     status = store.get_status(job_id)
     transcript = store.read_json(job_id, "transcript")
     highlights = store.read_json(job_id, "highlights")
+    input_payload = store.read_json(job_id, "input") or {}
     return StateResponse(
         job_id=job_id,
         status=status.status,
         error=status.error,
+        episode_title=input_payload.get("episode_title"),
         transcript=transcript,
         highlights=highlights,
     )

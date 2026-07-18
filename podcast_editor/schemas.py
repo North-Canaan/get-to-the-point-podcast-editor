@@ -17,6 +17,7 @@ class JobStatus(StrEnum):
 
 class CreateJobRequest(BaseModel):
     url: str = Field(min_length=1)
+    title: str | None = None
 
 
 class CreateJobResponse(BaseModel):
@@ -92,6 +93,7 @@ class StateResponse(BaseModel):
     job_id: str
     status: JobStatus
     error: str | None = None
+    episode_title: str | None = None
     transcript: Transcript | None = None
     highlights: Highlights | None = None
 

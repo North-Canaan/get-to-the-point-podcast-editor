@@ -1,6 +1,8 @@
+from types import SimpleNamespace
+
 import pytest
 
-from podcast_editor.pipeline.highlights import enrich_highlights, parse_json_response
+from podcast_editor.pipeline.highlights import call_claude, enrich_highlights, parse_json_response
 
 
 def test_parse_json_response_strips_code_fences() -> None:
@@ -41,3 +43,17 @@ def test_enrich_highlights_adds_ids_and_matching_text() -> None:
 
     assert enriched["highlights"][0]["id"] == "h01"
     assert enriched["highlights"][0]["text"] == "פתיחה הרעיון המרכזי"
+
+
+def test_call_claude_avoids_deprecated_temperature_parameter() -> None:
+    captured = {}
+
+    class Messages:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text='{"ok":true}')])
+
+    client = SimpleNamespace(messages=Messages())
+    call_claude(client, "claude-test", {"segments": []})
+
+    assert "temperature" not in captured

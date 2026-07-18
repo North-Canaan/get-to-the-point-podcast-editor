@@ -12,7 +12,13 @@ from .highlights import detect_highlights
 ASSEMBLYAI_BASE = "https://api.assemblyai.com/v2"
 
 
-def submit_no_worker_job(job_id: str, source_url: str, store: JobStore, settings: Settings) -> dict:
+def submit_no_worker_job(
+    job_id: str,
+    source_url: str,
+    store: JobStore,
+    settings: Settings,
+    episode_title: str | None = None,
+) -> dict:
     if not settings.assemblyai_api_key:
         store.set_status(job_id, JobStatus.error, error="ASSEMBLYAI_API_KEY is required")
         raise RuntimeError("ASSEMBLYAI_API_KEY is required")
@@ -24,6 +30,7 @@ def submit_no_worker_job(job_id: str, source_url: str, store: JobStore, settings
         "resolved_audio_url": resolved_url,
         "assemblyai_transcript_id": transcript_id,
         "provider": "assemblyai",
+        "episode_title": episode_title,
     }
     store.write_json(job_id, "input", input_payload)
     store.set_status(

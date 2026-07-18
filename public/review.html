@@ -10,7 +10,15 @@
   <body>
     <main class="app-shell">
       <section class="toolbar" aria-labelledby="review-title">
-        <h1 id="review-title">Private Highlight Review</h1>
+        <div class="review-heading">
+          <div>
+            <p class="eyebrow">Podcast editor</p>
+            <h1 id="review-title">Preparing your episode</h1>
+            <p id="episode-title" class="episode-title"></p>
+          </div>
+          <a class="button secondary" href="/">Choose another episode</a>
+        </div>
+        <div id="manual-controls" hidden>
         <form id="new-job-form">
           <label for="episode-url">Podcast URL</label>
           <input id="episode-url" name="episode-url" type="url" placeholder="https://..." />
@@ -21,14 +29,21 @@
           <input id="job-id" name="job-id" placeholder="Paste a job id or use /jobs/{id}/review" />
           <button class="button secondary" id="load-job" type="button">Load job</button>
         </div>
-        <p class="status" id="status">No job loaded.</p>
+        </div>
+        <div class="processing-state" id="processing-state">
+          <span class="spinner" aria-hidden="true"></span>
+          <div>
+            <strong id="status">Loading episode…</strong>
+            <p id="status-detail">This page will update automatically.</p>
+          </div>
+        </div>
       </section>
-      <div class="audio-wrap">
+      <div class="audio-wrap" id="audio-wrap" hidden>
         <audio id="audio" controls preload="metadata"></audio>
       </div>
-      <section class="role-bar" id="role-bar" aria-label="Speaker roles"></section>
-      <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates"></section>
-      <div class="actions">
+      <section class="role-bar" id="role-bar" aria-label="Speaker roles" hidden></section>
+      <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates" hidden></section>
+      <div class="actions" id="produce-actions" hidden>
         <button class="button" id="produce" disabled type="button">Produce edit</button>
         <a class="button secondary" id="output-link" hidden>Open output</a>
       </div>
@@ -48,6 +63,11 @@
       };
 
       const statusEl = document.querySelector("#status");
+      const statusDetail = document.querySelector("#status-detail");
+      const processingState = document.querySelector("#processing-state");
+      const episodeTitle = document.querySelector("#episode-title");
+      const audioWrap = document.querySelector("#audio-wrap");
+      const produceActions = document.querySelector("#produce-actions");
       const roleBar = document.querySelector("#role-bar");
       const list = document.querySelector("#highlight-list");
       const audio = document.querySelector("#audio");
@@ -61,6 +81,10 @@
       if (pathMatch) {
         document.querySelector("#job-id").value = pathMatch[1];
         loadJob(pathMatch[1]);
+      } else {
+        document.querySelector("#manual-controls").hidden = false;
+        document.querySelector("#review-title").textContent = "Load an editing job";
+        setStatus("No job loaded.", "Choose an episode from the podcast library first.");
       }
 
       document.querySelector("#new-job-form").addEventListener("submit", async (event) => {
@@ -74,6 +98,10 @@
           body: JSON.stringify({ url })
         });
         const payload = await response.json();
+        if (!response.ok) {
+          setStatus("Could not create job.", payload.detail || "Please try again.", "error");
+          return;
+        }
         document.querySelector("#job-id").value = payload.job_id;
         history.replaceState(null, "", `/jobs/${payload.job_id}/review`);
         loadJob(payload.job_id);
@@ -133,15 +161,15 @@
         state.jobId = jobId;
         window.clearTimeout(state.pollTimer);
         outputLink.hidden = true;
-        audio.src = `/jobs/${jobId}/audio`;
-        setStatus("Loading job state...");
+        setStatus("Loading episode…", "Checking the processing status.");
         const response = await fetch(`/jobs/${jobId}/state`);
         if (!response.ok) {
-          setStatus("Job not found.");
+          setStatus("Job not found.", "Return to the podcast library and choose the episode again.", "error");
           return;
         }
         const payload = await response.json();
-        setStatus(`Status: ${payload.status}${payload.error ? " - " + payload.error : ""}`);
+        if (payload.episode_title) episodeTitle.textContent = payload.episode_title;
+        renderJobStatus(payload);
         if (["queued", "transcribing", "detecting_highlights"].includes(payload.status)) {
           state.pollTimer = window.setTimeout(() => loadJob(jobId), 10000);
         }
@@ -150,6 +178,13 @@
           list.innerHTML = "";
           return;
         }
+        audio.src = `/jobs/${jobId}/audio`;
+        audioWrap.hidden = false;
+        roleBar.hidden = false;
+        list.hidden = false;
+        produceActions.hidden = false;
+        processingState.classList.add("ready");
+        document.querySelector("#review-title").textContent = "Review suggested highlights";
         state.roles = payload.highlights.roles || {};
         state.highlights = [...payload.highlights.highlights].sort((a, b) => b.score - a.score);
         state.decisions.clear();
@@ -163,6 +198,26 @@
         renderRoles();
         renderHighlights();
         syncProduce();
+      }
+
+      function renderJobStatus(payload) {
+        const messages = {
+          queued: ["Starting episode…", "Submitting the audio for transcription."],
+          transcribing: ["Transcribing the episode…", "Hebrew transcription and speaker detection can take several minutes."],
+          detecting_highlights: ["Finding the strongest moments…", "The transcript is ready and highlight suggestions are being created."],
+          needs_review: ["Highlights are ready.", "Approve, reject, reorder, or adjust the suggested clips below."],
+          splicing: ["Edit saved.", "The final audio is being prepared in this browser."],
+          done: ["Your edited episode is ready.", "Open or download the finished MP3."],
+          error: ["We could not process this episode.", payload.error || "Please choose the episode again or try another feed."]
+        };
+        const message = messages[payload.status] || ["Processing episode…", "This page will update automatically."];
+        setStatus(message[0], message[1], payload.status === "error" ? "error" : "");
+        if (payload.status === "done") {
+          outputLink.href = `/jobs/${state.jobId}/output`;
+          outputLink.hidden = false;
+          produceActions.hidden = false;
+          processingState.classList.add("ready");
+        }
       }
 
       function renderRoles() {
@@ -273,8 +328,10 @@
         produce.disabled = ![...state.decisions.values()].some((item) => item.decision === "approve");
       }
 
-      function setStatus(value) {
+      function setStatus(value, detail = "", tone = "") {
         statusEl.textContent = value;
+        statusDetail.textContent = detail;
+        processingState.classList.toggle("error", tone === "error");
       }
 
       function formatTime(seconds) {

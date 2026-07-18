@@ -175,7 +175,7 @@
             const button = document.createElement("button");
             button.className = "button";
             button.textContent = "Edit episode";
-            button.addEventListener("click", () => createJob(episode.audio_url, button));
+            button.addEventListener("click", () => createJob(episode, button));
             row.append(details, button);
             list.append(row);
           });
@@ -224,14 +224,14 @@
 
       loadLibrary();
 
-      async function createJob(audioUrl, button) {
+      async function createJob(episode, button) {
         button.disabled = true;
         button.textContent = "Starting…";
         try {
           const response = await fetch("/jobs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: audioUrl }),
+            body: JSON.stringify({ url: episode.audio_url, title: episode.title }),
           });
           const data = await response.json();
           if (!response.ok) throw new Error(data.detail || "Could not start the job");

@@ -389,6 +389,70 @@ main section {
   gap: 12px;
 }
 
+.review-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 20px;
+}
+
+.review-heading h1,
+.review-heading p {
+  margin: 0;
+}
+
+.eyebrow {
+  color: var(--accent-dark);
+  font-size: 0.78rem;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.episode-title {
+  margin-top: 5px !important;
+  color: var(--muted);
+}
+
+.processing-state {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 8px;
+  background: #eef6f3;
+  color: var(--accent-dark);
+}
+
+.processing-state p {
+  margin: 3px 0 0;
+  color: var(--muted);
+}
+
+.processing-state.error {
+  background: #fff1f0;
+  color: var(--danger);
+}
+
+.processing-state.ready .spinner,
+.processing-state.error .spinner {
+  display: none;
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 3px solid rgba(15, 118, 110, 0.22);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .toolbar input {
   width: 100%;
   min-height: 42px;
@@ -516,6 +580,11 @@ audio {
     flex-direction: column;
     padding-top: 14px;
     padding-bottom: 14px;
+  }
+
+  .review-heading {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .row-actions {

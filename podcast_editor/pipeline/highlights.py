@@ -60,7 +60,6 @@ def call_claude(
     message = client.messages.create(
         model=model,
         max_tokens=12000,
-        temperature=0.2,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
     )
