@@ -98,6 +98,17 @@ class SupabaseClient:
             response.raise_for_status()
             return response.json()
 
+    def consume_rate_limit(self, key: str, window_seconds: int, maximum: int) -> bool:
+        headers = {**self.headers, "Content-Type": "application/json"}
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                f"{self.url}/rest/v1/rpc/consume_api_rate_limit",
+                headers=headers,
+                json={"rate_key": key, "window_seconds": window_seconds, "maximum": maximum},
+            )
+            response.raise_for_status()
+            return bool(response.json())
+
     def find_jobs_by_audio_url(self, audio_url: str, limit: int = 5) -> list[dict[str, Any]]:
         encoded_url = quote(audio_url, safe="")
         with httpx.Client(timeout=20.0) as client:
@@ -190,6 +201,19 @@ class SupabaseClient:
                 return None
             response.raise_for_status()
             return json.loads(response.text)
+
+    def artifact_size(self, job_id: str, name: str) -> int | None:
+        object_path = f"{job_id}/{name}"
+        with httpx.Client(timeout=20.0) as client:
+            response = client.head(
+                f"{self.url}/storage/v1/object/{self.bucket}/{object_path}",
+                headers=self.headers,
+            )
+            if storage_object_not_found(response):
+                return None
+            response.raise_for_status()
+            value = response.headers.get("content-length")
+            return int(value) if value and value.isdigit() else None
 
     def create_signed_url(self, object_path: str, expires_in: int = 3600) -> str:
         headers = {**self.headers, "Content-Type": "application/json"}

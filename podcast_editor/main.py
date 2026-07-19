@@ -1,10 +1,11 @@
 from pathlib import Path
 from datetime import datetime, timezone
 from email.utils import format_datetime
+import re
 from xml.sax.saxutils import escape
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -33,11 +34,66 @@ from .schemas import (
     ReviewRequest,
     StateResponse,
 )
+from .security import (
+    SECURITY_HEADERS,
+    client_rate_key,
+    enforce_same_origin,
+    validate_public_http_url,
+)
 from .pipeline.highlights import PROMPT_VERSION, detect_highlights
 
 settings = get_settings()
 store = JobStore(settings)
 app = FastAPI(title="Get To The Point Podcast Editor")
+
+RATE_RULES = (
+    ("POST", re.compile(r"^/jobs$"), 3600, 6),
+    ("POST", re.compile(r"^/feeds/episodes$"), 60, 20),
+    ("POST", re.compile(r"^/jobs/[0-9a-f-]+/highlights$"), 3600, 4),
+    (
+        "POST",
+        re.compile(r"^/jobs/[0-9a-f-]+/(?:output|output-upload-url|output-complete)$"),
+        3600,
+        30,
+    ),
+    ("POST", re.compile(r"^/jobs/[0-9a-f-]+/private-feed/email$"), 3600, 3),
+    ("GET", re.compile(r"^/jobs/[0-9a-f-]+/state$"), 60, 30),
+)
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    if (
+        request.url.path.startswith("/jobs/")
+        and request.headers.get("sec-fetch-site", "").casefold() == "cross-site"
+    ):
+        return JSONResponse({"detail": "cross-site request blocked"}, status_code=403)
+    try:
+        enforce_same_origin(request, settings)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    for method, pattern, window, maximum in RATE_RULES:
+        if request.method == method and pattern.fullmatch(request.url.path):
+            key = f"{method}:{pattern.pattern}:{client_rate_key(request, settings)}"
+            try:
+                allowed = store.consume_rate_limit(key, window, maximum)
+            except httpx.HTTPError:
+                allowed = False
+            if not allowed:
+                response = JSONResponse(
+                    {"detail": "Too many requests. Please try again later."}, status_code=429
+                )
+                response.headers["Retry-After"] = str(window)
+                break
+    else:
+        response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    if request.url.path.startswith(("/jobs/", "/me", "/private-feed/")):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return response
+
 
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
 if (PUBLIC_DIR / "assets").exists():
@@ -50,6 +106,18 @@ def mask_email(email: str) -> str:
         return email
     visible = local[:1]
     return f"{visible}{'•' * max(3, len(local) - 1)}@{domain}"
+
+
+def authorize_job_access(request: Request, job_id: str) -> dict:
+    record = store.get_job_record(job_id) or {}
+    if store.cloud and not record:
+        raise HTTPException(status_code=404, detail="job not found")
+    owner_id = record.get("user_id")
+    if owner_id:
+        user = current_user(request, settings)
+        if str(user.get("id")) != str(owner_id):
+            raise HTTPException(status_code=404, detail="job not found")
+    return record
 
 
 INDEX_FALLBACK_HTML = """<!doctype html>
@@ -138,6 +206,7 @@ def sitemap() -> FileResponse:
 
 @app.post("/jobs", response_model=CreateJobResponse)
 def create_job(payload: CreateJobRequest, request: Request) -> CreateJobResponse:
+    validate_public_http_url(payload.url)
     user = optional_current_user(request, settings)
     job_id = new_job_id()
     store.set_status(
@@ -158,6 +227,7 @@ def create_job(payload: CreateJobRequest, request: Request) -> CreateJobResponse
 
 @app.post("/feeds/episodes", response_model=FeedEpisodesResponse)
 def feed_episodes(request: FeedRequest) -> FeedEpisodesResponse:
+    validate_public_http_url(request.url)
     try:
         result = FeedEpisodesResponse.model_validate(list_feed_episodes(request.url))
         store.save_feed(request.url, result.title, len(result.episodes))
@@ -167,17 +237,18 @@ def feed_episodes(request: FeedRequest) -> FeedEpisodesResponse:
 
 
 @app.get("/feeds", response_model=FeedLibraryResponse)
-def feeds(query: str = "") -> FeedLibraryResponse:
+def feeds(query: str = Query(default="", max_length=100)) -> FeedLibraryResponse:
     return FeedLibraryResponse(feeds=store.list_feeds(query))
 
 
 @app.get("/jobs/{job_id}/state", response_model=StateResponse)
-def job_state(job_id: str) -> StateResponse:
+def job_state(job_id: str, request: Request) -> StateResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
 
+    job_record = authorize_job_access(request, job_id)
     advance_no_worker_job(job_id, store, settings)
     status = store.get_status(job_id)
     transcript = None
@@ -192,7 +263,6 @@ def job_state(job_id: str) -> StateResponse:
     }:
         highlights = store.read_json(job_id, "highlights")
     input_payload = store.read_json(job_id, "input") or {}
-    job_record = store.get_job_record(job_id) or {}
     return StateResponse(
         job_id=job_id,
         status=status.status,
@@ -219,6 +289,7 @@ def review_html(job_id: str) -> RedirectResponse:
 
 @app.get("/jobs/{job_id}/audio")
 def job_audio(job_id: str, request: Request) -> Response:
+    authorize_job_access(request, job_id)
     original = store.original_path(job_id)
     if not original or not original.exists():
         input_payload = store.read_json(job_id, "input") or {}
@@ -237,22 +308,26 @@ def job_audio(job_id: str, request: Request) -> Response:
 
 
 @app.post("/jobs/{job_id}/review")
-def submit_review(job_id: str, review: ReviewRequest) -> JSONResponse:
+def submit_review(job_id: str, review: ReviewRequest, request: Request) -> JSONResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
+    authorize_job_access(request, job_id)
     store.write_json(job_id, "review", review.model_dump())
     store.set_status(job_id, JobStatus.splicing)
     return JSONResponse({"ok": True, "job_id": job_id})
 
 
 @app.post("/jobs/{job_id}/highlights")
-def select_highlights(job_id: str, request: HighlightSelectionRequest) -> JSONResponse:
+def select_highlights(
+    job_id: str, payload: HighlightSelectionRequest, request: Request
+) -> JSONResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
+    authorize_job_access(request, job_id)
     if not store.read_json(job_id, "transcript"):
         raise HTTPException(status_code=409, detail="transcript is not ready")
     selection = {"mode": "library", "prompt_version": PROMPT_VERSION}
@@ -278,13 +353,21 @@ def select_highlights(job_id: str, request: HighlightSelectionRequest) -> JSONRe
 
 
 @app.post("/jobs/{job_id}/output")
-async def upload_output(job_id: str, file: UploadFile = File(...)) -> JSONResponse:
+async def upload_output(
+    job_id: str, request: Request, file: UploadFile = File(...)
+) -> JSONResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
+    authorize_job_access(request, job_id)
+    if file.content_type not in {"audio/mpeg", "audio/mp3", "application/octet-stream"}:
+        raise HTTPException(status_code=415, detail="MP3 audio is required")
+    content = await file.read(settings.max_output_bytes + 1)
+    if len(content) > settings.max_output_bytes:
+        raise HTTPException(status_code=413, detail="output is too large")
     output = store.artifact_path(job_id, "output")
-    output.write_bytes(await file.read())
+    output.write_bytes(content)
     store.upload_media(job_id, output, content_type="audio/mpeg")
     store.set_status(
         job_id,
@@ -298,11 +381,12 @@ async def upload_output(job_id: str, file: UploadFile = File(...)) -> JSONRespon
 
 
 @app.post("/jobs/{job_id}/output-upload-url")
-def output_upload_url(job_id: str) -> JSONResponse:
+def output_upload_url(job_id: str, request: Request) -> JSONResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
+    authorize_job_access(request, job_id)
     signed_url = store.signed_media_upload_url(job_id, "output.mp3")
     if not signed_url:
         raise HTTPException(status_code=501, detail="direct upload is unavailable")
@@ -310,17 +394,23 @@ def output_upload_url(job_id: str) -> JSONResponse:
 
 
 @app.post("/jobs/{job_id}/output-complete")
-def complete_output(job_id: str, request: CompleteOutputRequest) -> JSONResponse:
+def complete_output(job_id: str, payload: CompleteOutputRequest, request: Request) -> JSONResponse:
     try:
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
+    authorize_job_access(request, job_id)
+    actual_size = store.artifact_size(job_id, "output")
+    if actual_size is None:
+        raise HTTPException(status_code=409, detail="uploaded output was not found")
+    if actual_size != payload.size_bytes:
+        raise HTTPException(status_code=409, detail="uploaded output size does not match")
     store.set_status(
         job_id,
         JobStatus.done,
         extra={
             "output_storage_path": f"{job_id}/output.mp3",
-            "output_size_bytes": request.size_bytes,
+            "output_size_bytes": actual_size,
         },
     )
     return JSONResponse({"ok": True, "job_id": job_id})
@@ -334,6 +424,7 @@ def add_job_to_private_feed(
         validate_job_id(job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="job not found") from None
+    authorize_job_access(request, job_id)
     status = store.get_status(job_id)
     if status.status != JobStatus.done:
         raise HTTPException(status_code=409, detail="edited episode is not ready")
@@ -360,6 +451,7 @@ def email_private_feed(job_id: str, request: Request) -> JSONResponse:
     email = str(user.get("email") or "")
     if not email:
         raise HTTPException(status_code=422, detail="Your account does not have an email address")
+    authorize_job_access(request, job_id)
     status = store.get_status(job_id)
     if status.status != JobStatus.done:
         raise HTTPException(status_code=409, detail="edited episode is not ready")
@@ -442,11 +534,10 @@ def private_feed_episode(token: str, job_id: str) -> Response:
         raise HTTPException(status_code=404, detail="episode not found") from None
     if not store.private_feed_contains(token, job_id):
         raise HTTPException(status_code=404, detail="episode not found")
-    return job_output(job_id)
+    return _job_output_response(job_id)
 
 
-@app.get("/jobs/{job_id}/output")
-def job_output(job_id: str) -> FileResponse:
+def _job_output_response(job_id: str) -> Response:
     output = store.artifact_path(job_id, "output")
     if not output.exists():
         signed_url = store.signed_media_url(job_id, "output.mp3")
@@ -459,6 +550,16 @@ def job_output(job_id: str) -> FileResponse:
         filename="output.mp3",
         headers={"X-Robots-Tag": "noindex, nofollow"},
     )
+
+
+@app.get("/jobs/{job_id}/output")
+def job_output(job_id: str, request: Request) -> Response:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="output not found") from None
+    authorize_job_access(request, job_id)
+    return _job_output_response(job_id)
 
 
 def validate_private_feed_token(token: str) -> str:

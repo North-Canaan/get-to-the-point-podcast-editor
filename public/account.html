@@ -16,8 +16,12 @@
         const data = await response.json();
         document.querySelector("#account-name").textContent = data.user.email;
         document.querySelector("#account-feed").value = new URL(data.feed_url, location.origin).href;
-        const jobs = document.querySelector("#account-jobs"); jobs.innerHTML = "";
-        if (!data.jobs.length) jobs.innerHTML = "<p>No episodes yet. Choose one from the podcast library.</p>";
+        const jobs = document.querySelector("#account-jobs"); jobs.replaceChildren();
+        if (!data.jobs.length) {
+          const empty = document.createElement("p");
+          empty.textContent = "No episodes yet. Choose one from the podcast library.";
+          jobs.append(empty);
+        }
         for (const job of data.jobs) {
           const item = document.createElement("article"); item.className = "episode-card";
           const title = document.createElement("h3"); title.textContent = job.episode_title || (job.status === "done" ? "Edited episode" : "Episode in progress");

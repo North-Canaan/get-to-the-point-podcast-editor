@@ -13,10 +13,10 @@ def test_list_feed_episodes_returns_all_enclosures(monkeypatch) -> None:
         <enclosure url="https://cdn.example.com/one.mp3" type="audio/mpeg" /></item>
     </channel></rss>"""
 
-    def fake_get(self, url):
+    def fake_get(method, url):
         return httpx.Response(200, content=rss, request=httpx.Request("GET", url))
 
-    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    monkeypatch.setattr("podcast_editor.pipeline.ingest.public_http_request", fake_get)
     result = list_feed_episodes("https://example.com/feed.xml")
 
     assert result["title"] == "Test Show"
@@ -27,9 +27,9 @@ def test_list_feed_episodes_returns_all_enclosures(monkeypatch) -> None:
 def test_list_feed_episodes_rejects_feed_without_audio(monkeypatch) -> None:
     rss = b'<rss version="2.0"><channel><title>Empty</title><item><title>Post</title></item></channel></rss>'
 
-    def fake_get(self, url):
+    def fake_get(method, url):
         return httpx.Response(200, content=rss, request=httpx.Request("GET", url))
 
-    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    monkeypatch.setattr("podcast_editor.pipeline.ingest.public_http_request", fake_get)
     with pytest.raises(IngestError, match="no podcast episodes"):
         list_feed_episodes("https://example.com/feed.xml")

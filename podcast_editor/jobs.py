@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +37,8 @@ class JobStore:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.cloud = SupabaseClient.from_settings(self.settings)
+        self._rate_limits: dict[str, tuple[float, int]] = {}
+        self._rate_limit_lock = threading.Lock()
 
     def job_dir(self, job_id: str) -> Path:
         valid_id = validate_job_id(job_id)
@@ -111,6 +115,14 @@ class JobStore:
             return None
         return self.cloud.create_signed_upload_url(f"{job_id}/{filename}")
 
+    def artifact_size(self, job_id: str, name: str) -> int | None:
+        path = self.artifact_path(job_id, name)
+        if path.exists():
+            return path.stat().st_size
+        if self.cloud:
+            return self.cloud.artifact_size(job_id, ARTIFACT_NAMES[name])
+        return None
+
     def download_media(self, job_id: str, filename: str, target: Path) -> bool:
         if not self.cloud:
             return False
@@ -124,6 +136,19 @@ class JobStore:
         if not self.cloud:
             return None
         return self.cloud.get_job(job_id)
+
+    def consume_rate_limit(self, key: str, window_seconds: int, maximum: int) -> bool:
+        if self.cloud:
+            return self.cloud.consume_rate_limit(key, window_seconds, maximum)
+        now = time.monotonic()
+        with self._rate_limit_lock:
+            started_at, count = self._rate_limits.get(key, (now, 0))
+            if now - started_at >= window_seconds:
+                started_at, count = now, 0
+            if count >= maximum:
+                return False
+            self._rate_limits[key] = (started_at, count + 1)
+            return True
 
     def list_user_jobs(self, user_id: str) -> list[dict]:
         return self.cloud.list_user_jobs(user_id) if self.cloud else []

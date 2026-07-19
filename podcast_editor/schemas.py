@@ -16,8 +16,8 @@ class JobStatus(StrEnum):
 
 
 class CreateJobRequest(BaseModel):
-    url: str = Field(min_length=1)
-    title: str | None = None
+    url: str = Field(min_length=8, max_length=2048)
+    title: str | None = Field(default=None, max_length=300)
     language: str = Field(default="en", pattern=r"^[a-z]{2,3}$")
 
 
@@ -26,27 +26,27 @@ class CreateJobResponse(BaseModel):
 
 
 class FeedRequest(BaseModel):
-    url: str = Field(min_length=1)
+    url: str = Field(min_length=8, max_length=2048)
 
 
 class FeedEpisode(BaseModel):
-    title: str
-    audio_url: str
-    published: str | None = None
-    description: str | None = None
-    duration: str | None = None
+    title: str = Field(max_length=300)
+    audio_url: str = Field(max_length=2048)
+    published: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=20_000)
+    duration: str | None = Field(default=None, max_length=100)
     language: str
 
 
 class FeedEpisodesResponse(BaseModel):
-    title: str
+    title: str = Field(max_length=300)
     language: str
-    episodes: list[FeedEpisode]
+    episodes: list[FeedEpisode] = Field(max_length=500)
 
 
 class SavedFeed(BaseModel):
-    url: str
-    title: str
+    url: str = Field(max_length=2048)
+    title: str = Field(max_length=300)
     episode_count: int = 0
     updated_at: str | None = None
 
@@ -105,7 +105,7 @@ class PrivateFeedRequest(BaseModel):
 
 
 class CompleteOutputRequest(BaseModel):
-    size_bytes: int = Field(ge=1)
+    size_bytes: int = Field(ge=1, le=1_000_000_000)
 
 
 class StateResponse(BaseModel):
@@ -121,8 +121,8 @@ class StateResponse(BaseModel):
 
 
 class ReviewSegment(BaseModel):
-    start: float
-    end: float
+    start: float = Field(ge=0, le=86_400)
+    end: float = Field(gt=0, le=86_400)
 
     @field_validator("end")
     @classmethod
@@ -133,7 +133,7 @@ class ReviewSegment(BaseModel):
 
 
 class ReviewRequest(BaseModel):
-    ordered_segments: list[ReviewSegment]
+    ordered_segments: list[ReviewSegment] = Field(min_length=1, max_length=500)
 
     @field_validator("ordered_segments")
     @classmethod

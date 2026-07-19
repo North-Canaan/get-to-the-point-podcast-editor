@@ -3,11 +3,13 @@ from typing import Any
 
 import feedparser
 import httpx
+from fastapi import HTTPException
 
 from ..config import Settings
 from ..jobs import JobStore
 from ..schemas import JobStatus
 from .highlights import detect_highlights
+from ..security import public_http_request, validate_public_http_url
 
 ASSEMBLYAI_BASE = "https://api.assemblyai.com/v2"
 
@@ -20,6 +22,7 @@ def submit_no_worker_job(
     episode_title: str | None = None,
     language: str = "en",
 ) -> dict:
+    validate_public_http_url(source_url)
     resolved_url = resolve_audio_url(source_url)
     cached = store.find_cached_transcript(resolved_url)
     if cached:
@@ -48,7 +51,9 @@ def submit_no_worker_job(
         store.set_status(job_id, JobStatus.error, error="ASSEMBLYAI_API_KEY is required")
         raise RuntimeError("ASSEMBLYAI_API_KEY is required")
 
-    transcript_id = submit_assemblyai_transcript(settings.assemblyai_api_key, resolved_url, language)
+    transcript_id = submit_assemblyai_transcript(
+        settings.assemblyai_api_key, resolved_url, language
+    )
     input_payload = {
         "source_url": source_url,
         "resolved_audio_url": resolved_url,
@@ -118,17 +123,15 @@ def finish_highlight_detection(job_id: str, store: JobStore, settings: Settings)
 def resolve_audio_url(source_url: str) -> str:
     text = ""
     try:
-        with httpx.Client(follow_redirects=True, timeout=20.0) as client:
-            response = client.head(source_url)
-            content_type = response.headers.get("content-type", "")
-            if "xml" in content_type or "rss" in content_type or looks_like_feed_url(source_url):
-                text = client.get(source_url).text
-    except httpx.HTTPError:
+        response = public_http_request("HEAD", source_url)
+        content_type = response.headers.get("content-type", "")
+        if "xml" in content_type or "rss" in content_type or looks_like_feed_url(source_url):
+            text = public_http_request("GET", source_url).text
+    except (httpx.HTTPError, HTTPException):
         if looks_like_feed_url(source_url):
             try:
-                with httpx.Client(follow_redirects=True, timeout=20.0) as client:
-                    text = client.get(source_url).text
-            except httpx.HTTPError:
+                text = public_http_request("GET", source_url).text
+            except (httpx.HTTPError, HTTPException):
                 text = ""
 
     if not text:
@@ -140,11 +143,11 @@ def resolve_audio_url(source_url: str) -> str:
         for enclosure in getattr(entry, "enclosures", []) or []:
             href = enclosure.get("href")
             if href:
-                return str(href)
+                return validate_public_http_url(str(href))
         for link in getattr(entry, "links", []) or []:
             if link.get("rel") == "enclosure" and link.get("href"):
-                return str(link["href"])
-    return source_url
+                return validate_public_http_url(str(link["href"]))
+    return validate_public_http_url(source_url)
 
 
 def looks_like_feed_url(source_url: str) -> bool:

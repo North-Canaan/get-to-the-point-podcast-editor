@@ -8,9 +8,11 @@ from urllib.parse import urlparse
 import feedparser
 import httpx
 import yt_dlp
+from fastapi import HTTPException
 
 from ..jobs import JobStore
 from .media import ffprobe_duration, transcode_to_16k_wav
+from ..security import public_http_request, validate_public_http_url
 
 
 class IngestError(RuntimeError):
@@ -19,10 +21,8 @@ class IngestError(RuntimeError):
 
 def list_feed_episodes(source_url: str) -> dict:
     try:
-        with httpx.Client(follow_redirects=True, timeout=20.0) as client:
-            response = client.get(source_url)
-            response.raise_for_status()
-    except httpx.HTTPError as exc:
+        response = public_http_request("GET", source_url)
+    except (httpx.HTTPError, HTTPException) as exc:
         raise IngestError(f"could not fetch RSS feed: {exc}") from exc
 
     parsed = feedparser.parse(response.content)
@@ -135,6 +135,7 @@ def maybe_resolve_feed(source_url: str) -> str | None:
 
 
 def ytdlp_extract_audio_url(source_url: str) -> str:
+    validate_public_http_url(source_url)
     opts = {
         "format": "bestaudio/best",
         "quiet": True,
@@ -152,7 +153,7 @@ def ytdlp_extract_audio_url(source_url: str) -> str:
     direct_url = info.get("url")
     if not direct_url:
         raise IngestError("yt-dlp did not resolve an audio URL")
-    return str(direct_url)
+    return validate_public_http_url(str(direct_url))
 
 
 def download_audio(job_id: str, audio_url: str, store: JobStore) -> Path:
@@ -183,6 +184,7 @@ def download_audio(job_id: str, audio_url: str, store: JobStore) -> Path:
 
 
 def direct_download(audio_url: str, output: Path) -> None:
+    validate_public_http_url(audio_url)
     with httpx.stream("GET", audio_url, follow_redirects=True, timeout=60.0) as response:
         response.raise_for_status()
         with output.open("wb") as file:

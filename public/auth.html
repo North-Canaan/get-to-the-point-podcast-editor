@@ -22,7 +22,7 @@
           <label for="email">Email</label>
           <input id="email" type="email" autocomplete="email" required />
           <label for="password">Password</label>
-          <input id="password" type="password" autocomplete="current-password" minlength="8" required />
+          <input id="password" type="password" autocomplete="current-password" minlength="12" maxlength="128" required />
           <button class="button" id="auth-submit" type="submit">Sign in</button>
           <p id="auth-status" class="feed-status" aria-live="polite"></p>
         </form>
@@ -58,7 +58,9 @@
           const response = await fetch(`/api/auth/${mode}/email`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.message || "Authentication failed");
-          location.href = new URLSearchParams(location.search).get("returnTo") || "/account.html";
+          const requestedReturn = new URLSearchParams(location.search).get("returnTo") || "/account.html";
+          const destination = new URL(requestedReturn, location.origin);
+          location.href = destination.origin === location.origin ? `${destination.pathname}${destination.search}${destination.hash}` : "/account.html";
         } catch (error) {
           status.textContent = error.message;
         } finally { submit.disabled = false; }

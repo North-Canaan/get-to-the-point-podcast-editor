@@ -43,6 +43,7 @@ def test_anonymous_user_can_start_episode_when_auth_is_configured(
         lambda *_args: (_ for _ in ()).throw(HTTPException(status_code=401)),
     )
     monkeypatch.setattr(main_module, "submit_no_worker_job", lambda *_args: {})
+    monkeypatch.setattr(main_module, "validate_public_http_url", lambda url: url)
 
     response = TestClient(app).post(
         "/jobs",

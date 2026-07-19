@@ -75,6 +75,7 @@ def test_submit_job_preserves_selected_episode_title(monkeypatch, tmp_path: Path
     store = JobStore(settings)
     job_id = new_job_id()
     monkeypatch.setattr(no_worker, "resolve_audio_url", lambda url: url)
+    monkeypatch.setattr(no_worker, "validate_public_http_url", lambda url: url)
     monkeypatch.setattr(
         no_worker, "submit_assemblyai_transcript", lambda key, url, language: "tx_123"
     )
@@ -113,6 +114,7 @@ def test_submit_reuses_cached_transcript_without_assemblyai(monkeypatch, tmp_pat
     job_id = new_job_id()
     transcript = {"duration": 30.0, "segments": []}
     monkeypatch.setattr(no_worker, "resolve_audio_url", lambda url: url)
+    monkeypatch.setattr(no_worker, "validate_public_http_url", lambda url: url)
     monkeypatch.setattr(
         store,
         "find_cached_transcript",
@@ -140,6 +142,7 @@ def test_submit_reuses_cached_highlights_too(monkeypatch, tmp_path: Path) -> Non
     transcript = {"duration": 30.0, "segments": []}
     highlights = {"roles": {}, "highlights": []}
     monkeypatch.setattr(no_worker, "resolve_audio_url", lambda url: url)
+    monkeypatch.setattr(no_worker, "validate_public_http_url", lambda url: url)
     monkeypatch.setattr(
         store,
         "find_cached_transcript",

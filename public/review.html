@@ -333,7 +333,7 @@
           state.pollTimer = window.setTimeout(() => loadJob(jobId), 10000);
         }
         if (!payload.highlights) {
-          list.innerHTML = "";
+          list.replaceChildren();
           return;
         }
         audio.src = `/jobs/${jobId}/audio`;
@@ -367,7 +367,7 @@
       }
 
       function renderTopics(topics, selectedTopic) {
-        topicOptions.innerHTML = "";
+        topicOptions.replaceChildren();
         const choices = [{ value: "", label: "All topics" }, ...topics.map((topic) => ({ value: topic, label: topic }))];
         choices.forEach((choice, index) => {
           const label = document.createElement("label");
@@ -421,24 +421,32 @@
       }
 
       function renderHighlights() {
-        list.innerHTML = "";
+        list.replaceChildren();
         state.highlights.forEach((item) => {
           const decision = state.decisions.get(item.id);
           const row = document.createElement("article");
           row.className = `highlight-row ${decision.decision === "approve" ? "selected" : ""} ${decision.decision === "reject" ? "rejected" : ""}`;
-          row.innerHTML = `
-            <div class="highlight-content">
-              <div class="highlight-meta">
-                <span>${formatTime(item.start)}–${formatTime(item.end)}</span>
-                <span>${formatDuration(item.end - item.start)}</span>
-              </div>
-              <p class="reason">${escapeHtml(item.reason)}</p>
-              <details class="highlight-transcript">
-                <summary>Show transcript</summary>
-                <p class="highlight-text">${escapeHtml(item.text || "")}</p>
-              </details>
-            </div>
-          `;
+          const content = document.createElement("div");
+          content.className = "highlight-content";
+          const meta = document.createElement("div");
+          meta.className = "highlight-meta";
+          const range = document.createElement("span");
+          range.textContent = `${formatTime(item.start)}–${formatTime(item.end)}`;
+          const duration = document.createElement("span");
+          duration.textContent = formatDuration(item.end - item.start);
+          meta.append(range, duration);
+          const reason = document.createElement("p");
+          reason.className = "reason";
+          reason.textContent = item.reason || "";
+          const transcript = document.createElement("details");
+          transcript.className = "highlight-transcript";
+          const summary = document.createElement("summary");
+          summary.textContent = "Show transcript";
+          const transcriptText = document.createElement("p");
+          transcriptText.className = "highlight-text";
+          transcriptText.textContent = item.text || "";
+          transcript.append(summary, transcriptText);
+          content.append(meta, reason, transcript);
           const actions = document.createElement("div");
           actions.className = "row-actions";
           const play = document.createElement("button");
@@ -454,7 +462,7 @@
           toggles.append(approve, reject);
 
           actions.append(toggles, play);
-          row.append(actions);
+          row.append(content, actions);
           list.append(row);
         });
       }
@@ -728,12 +736,6 @@
         const minutes = Math.floor(rounded / 60);
         const rest = rounded % 60;
         return rest ? `${minutes} min ${rest} sec` : `${minutes} min`;
-      }
-
-      function escapeHtml(value) {
-        return String(value).replace(/[&<>"']/g, (char) => {
-          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char];
-        });
       }
 
       async function spliceInBrowser(audioUrl, orderedSegments) {

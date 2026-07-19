@@ -42,8 +42,10 @@ def optional_current_user(request: Request, settings: Settings) -> dict | None:
         return None
     try:
         return current_user(request, settings)
-    except HTTPException:
-        return None
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return None
+        raise
 
 
 def personal_feed_token(user_id: str, settings: Settings) -> str:

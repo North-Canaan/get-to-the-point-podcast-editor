@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     better_auth_secret: str | None = None
     resend_api_key: str | None = None
     feed_email_from: str = "Get To The Point <feeds@example.com>"
+    trusted_origins: str = "http://localhost:8000,https://get-to-the-point-podcast-editor.vercel.app"
+    rate_limit_salt: str | None = None
+    max_output_bytes: int = 1_000_000_000
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
