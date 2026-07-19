@@ -107,6 +107,17 @@
     <script src="/assets/auth.js" defer></script>
     <script type="module">
       import { FFmpeg } from "/assets/ffmpeg/index.js";
+      import {
+        PADDING_SECONDS,
+        STANDARD_OUTPUT_KBPS,
+        SAFE_OUTPUT_BYTES,
+        HARD_OUTPUT_BYTES,
+        LARGE_SOURCE_BYTES,
+        filterValidHighlights,
+        selectedOutputSeconds,
+        estimateMp3Bytes,
+        needsCompressedEditing
+      } from "/assets/review-logic.js";
 
       const state = {
         jobId: "",
@@ -159,12 +170,7 @@
       const emailFeed = document.querySelector("#email-feed");
       const feedHelp = document.querySelector("#feed-help");
       const produceLog = document.querySelector("#produce-log");
-      const PADDING_SECONDS = 0.3;
       const FADE_SECONDS = 0.02;
-      const STANDARD_OUTPUT_KBPS = 128;
-      const SAFE_OUTPUT_BYTES = 43_000_000;
-      const HARD_OUTPUT_BYTES = 47_000_000;
-      const LARGE_SOURCE_BYTES = 60 * 1024 * 1024;
 
       podcastFeedAction.addEventListener("click", () => {
         listeningCard.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -413,13 +419,7 @@
         highlightControls.hidden = false;
         processingState.classList.add("ready");
         document.querySelector("#review-title").textContent = "Review suggested highlights";
-        state.allHighlights = [...payload.highlights]
-          .filter((item) => {
-            const start = Number(item.start);
-            const end = Number(item.end);
-            return Number.isFinite(start) && Number.isFinite(end)
-              && start >= 0 && end > start && end <= 86400;
-          })
+        state.allHighlights = filterValidHighlights(payload.highlights)
           .sort((a, b) => b.score - a.score);
         state.highlights = [...state.allHighlights];
         state.decisions.clear();
@@ -882,7 +882,7 @@
           selectedOutputSeconds(orderedSegments, metadata.duration),
           STANDARD_OUTPUT_KBPS
         );
-        if (metadata.size_bytes > LARGE_SOURCE_BYTES || estimatedBytes > SAFE_OUTPUT_BYTES) {
+        if (needsCompressedEditing(metadata, orderedSegments)) {
           const reason = metadata.size_bytes > LARGE_SOURCE_BYTES
             ? `Large source detected (${formatBytes(metadata.size_bytes)})`
             : `Large edit detected (about ${formatBytes(estimatedBytes)} at standard quality)`;
@@ -1078,19 +1078,6 @@
           throw new Error(`Edited audio is still too large (${formatBytes(blob.size)}). Select fewer highlights.`);
         }
         return blob;
-      }
-
-      function selectedOutputSeconds(segments, sourceDuration = Infinity) {
-        return segments.reduce((total, segment) => {
-          const start = Math.max(0, Number(segment.start) - PADDING_SECONDS);
-          const end = Math.min(sourceDuration, Number(segment.end) + PADDING_SECONDS);
-          return total + Math.max(0, end - start);
-        }, 0);
-      }
-
-      function estimateMp3Bytes(seconds, bitrateKbps) {
-        if (!(seconds > 0)) return 0;
-        return Math.ceil((seconds * bitrateKbps * 1000) / 8 * 1.02 + 64 * 1024);
       }
 
       async function fetchSameOriginAudioRange(

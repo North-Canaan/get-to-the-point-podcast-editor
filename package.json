@@ -2,6 +2,10 @@
   "name": "get-to-the-point-auth",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "npm run test:frontend",
+    "test:frontend": "node --test tests/frontend/*.test.mjs"
+  },
   "dependencies": {
     "better-auth": "1.6.23",
     "pg": "^8.16.3"
