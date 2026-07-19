@@ -57,6 +57,7 @@ RATE_RULES = (
         3600,
         30,
     ),
+    ("POST", re.compile(r"^/jobs/[0-9a-f-]+/advance$"), 60, 30),
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/private-feed/email$"), 3600, 3),
     ("GET", re.compile(r"^/jobs/[0-9a-f-]+/state$"), 60, 30),
 )
@@ -250,7 +251,6 @@ def job_state(job_id: str, request: Request) -> StateResponse:
         raise HTTPException(status_code=404, detail="job not found") from None
 
     job_record = authorize_job_access(request, job_id)
-    advance_no_worker_job(job_id, store, settings)
     status = store.get_status(job_id)
     if status.status == JobStatus.splicing:
         try:
@@ -308,6 +308,43 @@ def job_status_is_stale(updated_at: object, minutes: int) -> bool:
     except ValueError:
         return False
     return datetime.now(timezone.utc) - updated > timedelta(minutes=minutes)
+
+
+@app.post("/jobs/{job_id}/advance")
+def advance_job(job_id: str, request: Request) -> JSONResponse:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    job_record = authorize_job_access(request, job_id)
+    status = store.get_status(job_id)
+    if status.status not in {JobStatus.transcribing, JobStatus.detecting_highlights}:
+        return JSONResponse({"started": False, "status": status.status.value})
+
+    worker_id = f"web-{new_job_id()}"
+    if store.cloud:
+        locked_at = job_record.get("locked_at")
+        if job_record.get("worker_id") and not job_status_is_stale(locked_at, minutes=6):
+            return JSONResponse(
+                {"started": False, "status": status.status.value}, status_code=202
+            )
+        if job_record.get("worker_id"):
+            store.update_job_fields(job_id, {"worker_id": None, "locked_at": None})
+        if not store.cloud.claim_job(job_id, status.status, worker_id):
+            return JSONResponse(
+                {"started": False, "status": status.status.value}, status_code=202
+            )
+
+    try:
+        advance_no_worker_job(job_id, store, settings)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="processing provider is unavailable") from exc
+    finally:
+        if store.cloud:
+            store.update_job_fields(job_id, {"worker_id": None, "locked_at": None})
+
+    current = store.get_status(job_id)
+    return JSONResponse({"started": True, "status": current.status.value})
 
 
 @app.get("/jobs/{job_id}/review", include_in_schema=False)

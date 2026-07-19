@@ -122,6 +122,8 @@
         pipelineStartedAt: 0,
         pollRequestStartedAt: 0,
         lastCheckedAt: 0,
+        advancePromise: null,
+        advanceJobId: "",
         stopTimer: null,
         pollTimer: null
       };
@@ -349,6 +351,9 @@
         emailFeed.hidden = !payload.email_delivery_available;
         if (payload.episode_title) episodeTitle.textContent = payload.episode_title;
         renderJobStatus(payload);
+        if (["transcribing", "detecting_highlights"].includes(payload.status)) {
+          triggerJobAdvance(jobId);
+        }
         if (["queued", "transcribing", "detecting_highlights"].includes(payload.status)) {
           state.pollTimer = window.setTimeout(() => loadJob(jobId), 10000);
         }
@@ -363,6 +368,25 @@
           setStatus("Building the complete highlight library…", "Updating this episode with exhaustive, topic-tagged highlights.");
           updateHighlights.click();
         }
+      }
+
+      function triggerJobAdvance(jobId) {
+        if (state.advancePromise && state.advanceJobId === jobId) return;
+        const request = fetch(`/jobs/${jobId}/advance`, { method: "POST" })
+          .then((response) => {
+            if (!response.ok && response.status !== 202) {
+              throw new Error(`Processing request failed: ${response.status}`);
+            }
+          })
+          .catch((error) => console.error("Job advance failed", error))
+          .finally(() => {
+            if (state.advancePromise === request) {
+              state.advancePromise = null;
+              state.advanceJobId = "";
+            }
+          });
+        state.advancePromise = request;
+        state.advanceJobId = jobId;
       }
 
       function applyHighlights(payload) {

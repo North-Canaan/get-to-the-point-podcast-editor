@@ -123,6 +123,40 @@ def test_job_state_finalizes_uploaded_output_after_lost_confirmation(
     assert payload["status"] == "done"
 
 
+def test_job_state_is_read_only_for_active_processing(monkeypatch, tmp_path: Path) -> None:
+    test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    job_id = new_job_id()
+    test_store.set_status(job_id, JobStatus.detecting_highlights)
+    monkeypatch.setattr(main_module, "store", test_store)
+    monkeypatch.setattr(
+        main_module,
+        "advance_no_worker_job",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("state advanced the job")),
+    )
+
+    response = TestClient(app).get(f"/jobs/{job_id}/state")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "detecting_highlights"
+
+
+def test_advance_endpoint_runs_active_processing(monkeypatch, tmp_path: Path) -> None:
+    test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    job_id = new_job_id()
+    test_store.set_status(job_id, JobStatus.detecting_highlights)
+    monkeypatch.setattr(main_module, "store", test_store)
+
+    def finish_job(active_job_id, active_store, _settings) -> None:
+        active_store.set_status(active_job_id, JobStatus.needs_review)
+
+    monkeypatch.setattr(main_module, "advance_no_worker_job", finish_job)
+
+    response = TestClient(app).post(f"/jobs/{job_id}/advance")
+
+    assert response.status_code == 200
+    assert response.json() == {"started": True, "status": "needs_review"}
+
+
 def test_create_additional_edit_reuses_completed_analysis(monkeypatch, tmp_path: Path) -> None:
     test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
     source_id = new_job_id()
