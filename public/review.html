@@ -825,20 +825,8 @@
           45_000,
           "Editor worker download timed out"
         );
-        const coreURL = await assetBlobURL(
-          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
-          "text/javascript",
-          "Loading the editor engine (2 of 3).",
-          4,
-          2
-        );
-        const wasmURL = await assetBlobURL(
-          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
-          "application/wasm",
-          "Loading the editor engine (3 of 3).",
-          6,
-          3
-        );
+        const coreURL = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+        const wasmURL = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm";
         setWorkingStatus("Starting the audio editor…", "Initializing the downloaded tools.", 9);
         await withTimeout(
           ffmpeg.load({ classWorkerURL, coreURL, wasmURL }),
@@ -923,20 +911,8 @@
           90_000,
           "Editor worker download timed out"
         );
-        const coreURL = await assetBlobURL(
-          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
-          "text/javascript",
-          "Loading the editor engine (1 of 2).",
-          4,
-          2
-        );
-        const wasmURL = await assetBlobURL(
-          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
-          "application/wasm",
-          "Loading the editor engine (2 of 2).",
-          6,
-          3
-        );
+        const coreURL = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+        const wasmURL = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm";
         startElapsedStatus(
           "Starting the audio editor…",
           (elapsed) => `Compiling the audio tools in this browser · ${elapsed} elapsed · this can take several minutes on the first run`,
@@ -1088,19 +1064,6 @@
           offset += chunk.byteLength;
         }
         return output;
-      }
-
-      async function assetBlobURL(url, mimeType, label, progressBase, progressSpan) {
-        const bytes = await withTimeout(
-          fetchWithProgress(url, (loaded, total) => {
-            const size = total ? `${formatBytes(loaded)} / ${formatBytes(total)}` : formatBytes(loaded);
-            const percent = total ? progressBase + (loaded / total) * progressSpan : progressBase;
-            setWorkingStatus("Preparing the audio editor…", `${label} ${size}`, percent);
-          }),
-          90_000,
-          `${label} timed out`
-        );
-        return URL.createObjectURL(new Blob([bytes], { type: mimeType }));
       }
 
       function withTimeout(promise, milliseconds, message) {
