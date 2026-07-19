@@ -915,7 +915,42 @@
         if (!(metadata.duration > 0) || !(metadata.size_bytes > 0)) {
           throw new Error("The source audio duration is unavailable");
         }
-        const chunks = [];
+        setWorkingStatus("Preparing the audio editor…", "Loading compression tools for the selected audio.", 3);
+        const ffmpeg = new FFmpeg();
+        ffmpeg.on("log", ({ message }) => appendProduceLog(message));
+        const classWorkerURL = await withTimeout(
+          moduleWorkerBlobURL("https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js"),
+          90_000,
+          "Editor worker download timed out"
+        );
+        const coreURL = await assetBlobURL(
+          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+          "text/javascript",
+          "Loading the editor engine (1 of 2).",
+          4,
+          2
+        );
+        const wasmURL = await assetBlobURL(
+          "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
+          "application/wasm",
+          "Loading the editor engine (2 of 2).",
+          6,
+          3
+        );
+        await withTimeout(
+          ffmpeg.load({ classWorkerURL, coreURL, wasmURL }),
+          90_000,
+          "Audio editor initialization timed out"
+        );
+
+        const selectedSeconds = orderedSegments.reduce(
+          (total, segment) => total + Math.max(0, Number(segment.end) - Number(segment.start)),
+          0
+        );
+        const maximumKbps = Math.floor((45 * 1024 * 1024 * 8) / Math.max(1, selectedSeconds) / 1000);
+        const bitrate = [128, 112, 96, 80, 64, 48, 32].find((value) => value <= maximumKbps) || 32;
+        appendProduceLog(`Compressing ${formatDuration(selectedSeconds)} of selected audio at ${bitrate}kbps.`);
+        const clipNames = [];
         for (const [index, segment] of orderedSegments.entries()) {
           const start = Math.max(0, Number(segment.start) - PADDING_SECONDS);
           const end = Math.min(metadata.duration, Number(segment.end) + PADDING_SECONDS);
@@ -936,10 +971,56 @@
               );
             }
           );
-          chunks.push(bytes);
+          const inputName = `large_source_${String(index).padStart(3, "0")}.mp3`;
+          const clipName = `large_clip_${String(index).padStart(3, "0")}.mp3`;
+          const duration = Math.max(0, end - start);
+          const fadeOutStart = Math.max(0, duration - FADE_SECONDS);
+          await ffmpeg.writeFile(inputName, bytes);
+          setWorkingStatus(
+            "Compressing selected audio…",
+            `Highlight ${index + 1} of ${orderedSegments.length}.`,
+            40 + ((index + 1) / orderedSegments.length) * 45
+          );
+          const exitCode = await ffmpeg.exec([
+            "-i",
+            inputName,
+            "-t",
+            duration.toFixed(3),
+            "-af",
+            `afade=t=in:st=0:d=${FADE_SECONDS},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${FADE_SECONDS}`,
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            `${bitrate}k`,
+            clipName
+          ]);
+          await ffmpeg.deleteFile(inputName);
+          if (exitCode !== 0) throw new Error(`Could not compress highlight ${index + 1}`);
+          clipNames.push(clipName);
         }
         setWorkingStatus("Assembling the edited episode…", "Joining the selected audio ranges.", 94);
-        return new Blob(chunks, { type: "audio/mpeg" });
+        await ffmpeg.writeFile(
+          "large_concat.txt",
+          new TextEncoder().encode(clipNames.map((name) => `file '${name}'`).join("\n") + "\n")
+        );
+        const concatExitCode = await ffmpeg.exec([
+          "-f",
+          "concat",
+          "-safe",
+          "0",
+          "-i",
+          "large_concat.txt",
+          "-c",
+          "copy",
+          "large_output.mp3"
+        ]);
+        if (concatExitCode !== 0) throw new Error("Could not assemble the compressed highlights");
+        const output = await ffmpeg.readFile("large_output.mp3");
+        const blob = new Blob([output.buffer], { type: "audio/mpeg" });
+        if (blob.size > 48 * 1024 * 1024) {
+          throw new Error(`Edited audio is still too large (${formatBytes(blob.size)}). Select fewer highlights.`);
+        }
+        return blob;
       }
 
       async function fetchSameOriginAudioRange(firstByte, lastByte, onProgress) {
