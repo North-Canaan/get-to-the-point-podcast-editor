@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from ..config import Settings
 from ..jobs import JobStore
 from ..schemas import JobStatus
-from .highlights import detect_highlights
+from .highlights import RetryableHighlightDetectionError, detect_highlights
 from .ingest import MAX_RSS_RESPONSE_BYTES
 from ..security import public_http_request, validate_public_http_url
 
@@ -115,6 +115,9 @@ def advance_no_worker_job(job_id: str, store: JobStore, settings: Settings) -> N
 def finish_highlight_detection(job_id: str, store: JobStore, settings: Settings) -> None:
     try:
         detect_highlights(job_id, store, settings)
+    except RetryableHighlightDetectionError:
+        # Keep detecting_highlights so the next leased invocation can retry.
+        return
     except Exception as exc:
         store.set_status(job_id, JobStatus.error, error=str(exc))
         return

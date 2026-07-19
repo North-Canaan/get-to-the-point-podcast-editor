@@ -10,7 +10,11 @@ from podcast_editor.config import Settings
 from podcast_editor.jobs import JobStore, new_job_id
 from podcast_editor.main import app
 from podcast_editor.schemas import JobStatus
-from podcast_editor.security import enforce_same_origin, validate_public_http_url
+from podcast_editor.security import (
+    enforce_same_origin,
+    pinned_request_target,
+    validate_public_http_url,
+)
 
 
 def test_ssrf_guard_rejects_private_and_credentialed_urls(monkeypatch) -> None:
@@ -36,6 +40,22 @@ def test_ssrf_guard_accepts_public_address(monkeypatch) -> None:
         ],
     )
     assert validate_public_http_url("https://example.com/feed") == "https://example.com/feed"
+
+
+def test_public_request_target_pins_validated_ip_and_preserves_host(monkeypatch) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
+
+    target, headers, extensions = pinned_request_target("https://example.com/feed")
+
+    assert target == "https://93.184.216.34/feed"
+    assert headers == {"Host": "example.com"}
+    assert extensions == {"sni_hostname": "example.com"}
 
 
 def test_csrf_guard_rejects_cross_site_origin(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ from podcast_editor.config import Settings
 from podcast_editor.jobs import JobStore, new_job_id
 from podcast_editor.pipeline import no_worker
 from podcast_editor.pipeline.no_worker import collapse_assemblyai_utterances
+from podcast_editor.pipeline.highlights import RetryableHighlightDetectionError
 from podcast_editor.schemas import JobStatus
 
 
@@ -106,6 +107,24 @@ def test_detecting_highlights_status_is_resumable(monkeypatch, tmp_path: Path) -
 
     assert len(called) == 1
     assert store.get_status(job_id).status == JobStatus.needs_review
+
+
+def test_transient_highlight_failure_remains_resumable(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, state_backend="filesystem")
+    store = JobStore(settings)
+    job_id = new_job_id()
+    store.set_status(job_id, JobStatus.detecting_highlights)
+    monkeypatch.setattr(
+        no_worker,
+        "detect_highlights",
+        lambda *_args: (_ for _ in ()).throw(RetryableHighlightDetectionError("retry")),
+    )
+
+    no_worker.advance_no_worker_job(job_id, store, settings)
+
+    status = store.get_status(job_id)
+    assert status.status == JobStatus.detecting_highlights
+    assert status.error is None
 
 
 def test_submit_reuses_cached_transcript_without_assemblyai(monkeypatch, tmp_path: Path) -> None:

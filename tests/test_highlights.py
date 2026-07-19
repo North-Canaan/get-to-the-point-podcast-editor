@@ -5,10 +5,14 @@ import pytest
 
 from podcast_editor.pipeline.highlights import (
     MAX_HIGHLIGHT_RESPONSE_TOKENS,
+    RetryableHighlightDetectionError,
     call_claude,
+    detect_highlights,
     enrich_highlights,
     parse_json_response,
 )
+from podcast_editor.config import Settings
+from podcast_editor.jobs import JobStore, new_job_id
 
 
 def test_parse_json_response_strips_code_fences() -> None:
@@ -78,3 +82,32 @@ def test_call_claude_avoids_deprecated_temperature_parameter() -> None:
     content = json.loads(captured["messages"][0]["content"])
     assert content["editorial_preferences"]["topic"] == "יזמות"
     assert content["editorial_preferences"]["target_minutes"] == 12
+
+
+def test_invalid_provider_json_retries_in_a_new_invocation(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    class Messages:
+        def create(self, **_kwargs):
+            calls.append(1)
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text="not json")])
+
+    class FakeAnthropic:
+        def __init__(self, **kwargs):
+            assert kwargs["timeout"] == 240.0
+            assert kwargs["max_retries"] == 0
+            self.messages = Messages()
+
+    settings = Settings(
+        data_dir=tmp_path, state_backend="filesystem", anthropic_api_key="test-key"
+    )
+    store = JobStore(settings)
+    job_id = new_job_id()
+    store.write_json(job_id, "input", {"language": "en"})
+    store.write_json(job_id, "transcript", {"duration": 1, "segments": []})
+    monkeypatch.setattr("podcast_editor.pipeline.highlights.Anthropic", FakeAnthropic)
+
+    with pytest.raises(RetryableHighlightDetectionError):
+        detect_highlights(job_id, store, settings)
+
+    assert len(calls) == 1

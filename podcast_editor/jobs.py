@@ -73,9 +73,11 @@ class JobStore:
 
     def read_json(self, job_id: str, name: str) -> dict | None:
         path = self.artifact_path(job_id, name)
+        # A Vercel instance can retain /tmp between requests while another instance
+        # advances the job. Supabase is authoritative whenever cloud state is enabled.
+        if self.cloud:
+            return self.cloud.download_json_artifact(job_id, ARTIFACT_NAMES[name])
         if not path.exists():
-            if self.cloud:
-                return self.cloud.download_json_artifact(job_id, ARTIFACT_NAMES[name])
             return None
         return json.loads(path.read_text(encoding="utf-8"))
 
@@ -114,6 +116,12 @@ class JobStore:
         if not self.cloud:
             return None
         return self.cloud.create_signed_upload_url(f"{job_id}/{filename}")
+
+    def delete_media(self, job_id: str, filename: str) -> None:
+        path = self.job_dir(job_id) / filename
+        path.unlink(missing_ok=True)
+        if self.cloud:
+            self.cloud.delete_artifact(job_id, filename)
 
     def artifact_size(self, job_id: str, name: str) -> int | None:
         path = self.artifact_path(job_id, name)

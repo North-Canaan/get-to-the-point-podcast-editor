@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     state_backend: str = "filesystem"
     run_inline_pipeline: bool | None = None
     worker_poll_seconds: float = 10.0
+    worker_stale_lease_minutes: int = 360
 
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-5"

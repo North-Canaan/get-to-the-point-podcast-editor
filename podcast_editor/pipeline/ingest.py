@@ -1,21 +1,20 @@
 import mimetypes
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
 import feedparser
 import httpx
-import yt_dlp
 from fastapi import HTTPException
 
 from ..jobs import JobStore
 from .media import ffprobe_duration, transcode_to_16k_wav
-from ..security import public_http_request, validate_public_http_url
+from ..security import download_public_http_file, public_http_request, validate_public_http_url
 
 MAX_RSS_RESPONSE_BYTES = 25 * 1024 * 1024
 MAX_FEED_EPISODES = 500
+MAX_SOURCE_AUDIO_BYTES = 1_000_000_000
 
 
 class IngestError(RuntimeError):
@@ -118,49 +117,35 @@ def ingest(job_id: str, source_url: str, store: JobStore) -> dict:
 def resolve_audio_url(source_url: str) -> str:
     feed_url = maybe_resolve_feed(source_url)
     if feed_url:
-        return feed_url
-    return ytdlp_extract_audio_url(source_url)
+        return validate_public_http_url(feed_url)
+    return validate_public_http_url(source_url)
 
 
 def maybe_resolve_feed(source_url: str) -> str | None:
-    headers: dict[str, str] = {}
+    likely_feed = urlparse(source_url).path.casefold().endswith((".rss", ".xml"))
     try:
-        with httpx.Client(follow_redirects=True, timeout=20.0) as client:
-            response = client.get(source_url)
-            headers = dict(response.headers)
-            sample = response.text[:2000]
-    except httpx.HTTPError:
-        response = None
-        sample = ""
+        head = public_http_request("HEAD", source_url)
+        content_type = head.headers.get("content-type", "").casefold()
+        if "xml" not in content_type and "rss" not in content_type and not likely_feed:
+            return None
+        sample = public_http_request(
+            "GET", source_url, max_bytes=MAX_RSS_RESPONSE_BYTES
+        ).text
+    except (httpx.HTTPError, HTTPException):
+        if not likely_feed:
+            return None
+        try:
+            sample = public_http_request(
+                "GET", source_url, max_bytes=MAX_RSS_RESPONSE_BYTES
+            ).text
+        except (httpx.HTTPError, HTTPException):
+            return None
 
-    content_type = headers.get("content-type", "")
-    parsed = feedparser.parse(sample if "xml" in content_type else source_url)
+    parsed = feedparser.parse(sample)
     if not parsed.entries:
         return None
 
     return _entry_audio_url(parsed.entries[0])
-
-
-def ytdlp_extract_audio_url(source_url: str) -> str:
-    validate_public_http_url(source_url)
-    opts = {
-        "format": "bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-    }
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(source_url, download=False)
-    except Exception as exc:  # yt-dlp raises a broad family of exceptions.
-        raise IngestError(f"yt-dlp failed to resolve audio: {exc}") from exc
-
-    if not isinstance(info, dict):
-        raise IngestError("yt-dlp returned no media info")
-    direct_url = info.get("url")
-    if not direct_url:
-        raise IngestError("yt-dlp did not resolve an audio URL")
-    return validate_public_http_url(str(direct_url))
 
 
 def download_audio(job_id: str, audio_url: str, store: JobStore) -> Path:
@@ -174,29 +159,11 @@ def download_audio(job_id: str, audio_url: str, store: JobStore) -> Path:
         shutil.copyfile(source, output)
         return output
 
-    args = [
-        "yt-dlp",
-        "--no-playlist",
-        "-f",
-        "bestaudio/best",
-        "-o",
-        str(output),
-        audio_url,
-    ]
     try:
-        subprocess.run(args, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError:
-        direct_download(audio_url, output)
+        download_public_http_file(audio_url, output, max_bytes=MAX_SOURCE_AUDIO_BYTES)
+    except (httpx.HTTPError, HTTPException) as exc:
+        raise IngestError(f"could not download source audio: {exc}") from exc
     return output
-
-
-def direct_download(audio_url: str, output: Path) -> None:
-    validate_public_http_url(audio_url)
-    with httpx.stream("GET", audio_url, follow_redirects=True, timeout=60.0) as response:
-        response.raise_for_status()
-        with output.open("wb") as file:
-            for chunk in response.iter_bytes():
-                file.write(chunk)
 
 
 def guess_extension(audio_url: str) -> str:

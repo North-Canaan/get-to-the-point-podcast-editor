@@ -31,3 +31,36 @@ def test_unrelated_storage_400_is_not_swallowed() -> None:
     response = httpx.Response(400, json={"message": "invalid request"})
 
     assert storage_object_not_found(response) is False
+
+
+def test_release_job_only_releases_matching_worker(monkeypatch) -> None:
+    client = SupabaseClient("https://example.supabase.co", "sb_secret_test", "artifacts")
+    request = {}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def patch(self, url, headers, json):
+            request.update(url=url, headers=headers, json=json)
+            return httpx.Response(
+                200, json=[{"id": "job"}], request=httpx.Request("PATCH", url)
+            )
+
+    monkeypatch.setattr("podcast_editor.cloud.httpx.Client", FakeClient)
+
+    released = client.release_job(
+        "11111111-1111-4111-8111-111111111111", "web-worker/1"
+    )
+
+    assert released is True
+    assert request["url"].endswith(
+        "?id=eq.11111111-1111-4111-8111-111111111111&worker_id=eq.web-worker%2F1"
+    )
+    assert request["json"] == {"worker_id": None, "locked_at": None}

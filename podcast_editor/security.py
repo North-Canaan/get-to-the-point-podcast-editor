@@ -1,6 +1,7 @@
 import hashlib
 import ipaddress
 import socket
+from pathlib import Path
 from urllib.parse import urlparse
 from urllib.parse import urljoin
 
@@ -61,8 +62,13 @@ def validate_public_http_url(value: str) -> str:
     hostname = parsed.hostname.rstrip(".").casefold()
     if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
         raise HTTPException(status_code=422, detail="Local network URLs are not allowed")
+    resolve_public_addresses(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+    return value
+
+
+def resolve_public_addresses(hostname: str, port: int) -> list[str]:
     try:
-        addresses = {item[4][0] for item in socket.getaddrinfo(hostname, parsed.port or 443)}
+        addresses = {item[4][0] for item in socket.getaddrinfo(hostname, port)}
     except socket.gaierror as exc:
         raise HTTPException(status_code=422, detail="URL host could not be resolved") from exc
     if not addresses:
@@ -73,7 +79,23 @@ def validate_public_http_url(value: str) -> str:
             raise HTTPException(
                 status_code=422, detail="Local or reserved network URLs are not allowed"
             )
-    return value
+    return sorted(addresses)
+
+
+def pinned_request_target(value: str) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Resolve once, then connect to the validated address with the original Host/SNI."""
+    validate_public_http_url(value)
+    parsed = urlparse(value)
+    assert parsed.hostname is not None
+    hostname = parsed.hostname.rstrip(".").casefold()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    address = resolve_public_addresses(hostname, port)[0]
+    address_literal = f"[{address}]" if ":" in address else address
+    include_port = parsed.port is not None
+    netloc = f"{address_literal}:{port}" if include_port else address_literal
+    target = parsed._replace(netloc=netloc).geturl()
+    host = f"{hostname}:{port}" if include_port else hostname
+    return target, {"Host": host}, {"sni_hostname": hostname}
 
 
 def public_http_request(
@@ -87,8 +109,13 @@ def public_http_request(
     current = url
     with httpx.Client(follow_redirects=False, timeout=20.0) as client:
         for _ in range(max_redirects + 1):
-            validate_public_http_url(current)
-            with client.stream(method, current, headers=headers) as response:
+            target, pinned_headers, extensions = pinned_request_target(current)
+            request_headers = {**(headers or {}), **pinned_headers}
+            request = client.build_request(
+                method, target, headers=request_headers, extensions=extensions
+            )
+            response = client.send(request, stream=True)
+            try:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
@@ -121,6 +148,51 @@ def public_http_request(
                     content=bytes(content),
                     request=response.request,
                 )
+            finally:
+                response.close()
+    raise HTTPException(status_code=422, detail="Too many URL redirects")
+
+
+def download_public_http_file(
+    url: str, target: Path, *, max_bytes: int, max_redirects: int = 5
+) -> int:
+    """Stream a public URL to disk without DNS re-resolution or unbounded growth."""
+    current = url
+    with httpx.Client(follow_redirects=False, timeout=60.0) as client:
+        for _ in range(max_redirects + 1):
+            pinned_url, pinned_headers, extensions = pinned_request_target(current)
+            request = client.build_request(
+                "GET", pinned_url, headers=pinned_headers, extensions=extensions
+            )
+            response = client.send(request, stream=True)
+            try:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        response.raise_for_status()
+                    current = urljoin(current, location)
+                    continue
+                response.raise_for_status()
+                declared = int(response.headers.get("content-length") or 0)
+                if declared > max_bytes:
+                    raise HTTPException(status_code=422, detail="Remote response is too large")
+                written = 0
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with target.open("wb") as output:
+                        for chunk in response.iter_bytes():
+                            written += len(chunk)
+                            if written > max_bytes:
+                                raise HTTPException(
+                                    status_code=422, detail="Remote response is too large"
+                                )
+                            output.write(chunk)
+                except Exception:
+                    target.unlink(missing_ok=True)
+                    raise
+                return written
+            finally:
+                response.close()
     raise HTTPException(status_code=422, detail="Too many URL redirects")
 
 

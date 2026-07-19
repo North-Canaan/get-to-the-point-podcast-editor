@@ -138,6 +138,7 @@ def test_job_state_is_read_only_for_active_processing(monkeypatch, tmp_path: Pat
 
     assert response.status_code == 200
     assert response.json()["status"] == "detecting_highlights"
+    assert response.json()["transcript"] is None
 
 
 def test_advance_endpoint_runs_active_processing(monkeypatch, tmp_path: Path) -> None:
@@ -229,6 +230,7 @@ def test_signed_in_user_can_email_personal_feed(monkeypatch, tmp_path: Path) -> 
         better_auth_url="https://auth.example.test",
         better_auth_secret="test-secret",
         resend_api_key="test-resend-key",
+        app_base_url="https://podcasts.example.test",
     )
     test_store = JobStore(test_settings)
     job_id = new_job_id()
@@ -254,5 +256,5 @@ def test_signed_in_user_can_email_personal_feed(monkeypatch, tmp_path: Path) -> 
     assert response.status_code == 200
     assert response.json()["email"] == "l•••••••@example.com"
     assert sent[0][0] == "listener@example.com"
-    assert sent[0][1].startswith("http://testserver/private-feed/")
+    assert sent[0][1].startswith("https://podcasts.example.test/private-feed/")
     assert test_store.list_private_feed_items(sent[0][1].split("/")[-1][:-4])

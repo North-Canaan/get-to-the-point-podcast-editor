@@ -55,3 +55,30 @@ def test_private_feed_items_are_isolated_by_secret_token(tmp_path: Path) -> None
     assert [item["job_id"] for item in first_items] == [first_job]
     assert store.private_feed_contains(first_token, second_job) is False
     assert store.list_private_feed_items("c" * 43) is None
+
+
+class FakeCloud:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        self.downloads = 0
+
+    def download_json_artifact(self, _job_id: str, _name: str) -> dict:
+        self.downloads += 1
+        return self.payload
+
+
+def test_cloud_json_is_authoritative_over_warm_local_cache(tmp_path: Path) -> None:
+    store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    job_id = new_job_id()
+    store.artifact_path(job_id, "status").write_text(
+        '{"job_id":"stale","status":"transcribing","error":null}', encoding="utf-8"
+    )
+    cloud = FakeCloud(
+        {"job_id": job_id, "status": "needs_review", "error": None}
+    )
+    store.cloud = cloud  # type: ignore[assignment]
+
+    payload = store.read_json(job_id, "status")
+
+    assert payload["status"] == "needs_review"
+    assert cloud.downloads == 1

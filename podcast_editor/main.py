@@ -41,7 +41,11 @@ from .security import (
     public_http_request,
     validate_public_http_url,
 )
-from .pipeline.highlights import PROMPT_VERSION, detect_highlights
+from .pipeline.highlights import (
+    PROMPT_VERSION,
+    RetryableHighlightDetectionError,
+    detect_highlights,
+)
 
 settings = get_settings()
 store = JobStore(settings)
@@ -58,6 +62,7 @@ RATE_RULES = (
         30,
     ),
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/advance$"), 60, 30),
+    ("POST", re.compile(r"^/jobs/[0-9a-f-]+/(?:review|edits|private-feed)$"), 3600, 30),
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/private-feed/email$"), 3600, 3),
     ("GET", re.compile(r"^/jobs/[0-9a-f-]+/state$"), 60, 30),
 )
@@ -108,6 +113,10 @@ def mask_email(email: str) -> str:
         return email
     visible = local[:1]
     return f"{visible}{'•' * max(3, len(local) - 1)}@{domain}"
+
+
+def canonical_base_url() -> str:
+    return settings.app_base_url.rstrip("/")
 
 
 def authorize_job_access(request: Request, job_id: str) -> dict:
@@ -274,7 +283,12 @@ def job_state(job_id: str, request: Request) -> StateResponse:
             job_record = store.get_job_record(job_id) or job_record
     transcript = None
     highlights = None
-    if status.status not in {JobStatus.queued, JobStatus.ingesting, JobStatus.transcribing}:
+    if status.status in {
+        JobStatus.needs_review,
+        JobStatus.splicing,
+        JobStatus.done,
+        JobStatus.error,
+    }:
         transcript = store.read_json(job_id, "transcript")
     if status.status in {
         JobStatus.needs_review,
@@ -329,7 +343,7 @@ def advance_job(job_id: str, request: Request) -> JSONResponse:
                 {"started": False, "status": status.status.value}, status_code=202
             )
         if job_record.get("worker_id"):
-            store.update_job_fields(job_id, {"worker_id": None, "locked_at": None})
+            store.cloud.release_job(job_id, str(job_record["worker_id"]))
         if not store.cloud.claim_job(job_id, status.status, worker_id):
             return JSONResponse(
                 {"started": False, "status": status.status.value}, status_code=202
@@ -341,7 +355,7 @@ def advance_job(job_id: str, request: Request) -> JSONResponse:
         raise HTTPException(status_code=503, detail="processing provider is unavailable") from exc
     finally:
         if store.cloud:
-            store.update_job_fields(job_id, {"worker_id": None, "locked_at": None})
+            store.cloud.release_job(job_id, worker_id)
 
     current = store.get_status(job_id)
     return JSONResponse({"started": True, "status": current.status.value})
@@ -505,6 +519,10 @@ def select_highlights(
             store,
             settings,
         )
+    except RetryableHighlightDetectionError:
+        return JSONResponse(
+            {"started": True, "status": JobStatus.detecting_highlights.value}, status_code=202
+        )
     except Exception as exc:
         store.set_status(job_id, JobStatus.error, error=str(exc))
         raise HTTPException(status_code=502, detail=f"Could not select highlights: {exc}") from exc
@@ -563,7 +581,11 @@ def complete_output(job_id: str, payload: CompleteOutputRequest, request: Reques
     actual_size = store.artifact_size(job_id, "output")
     if actual_size is None:
         raise HTTPException(status_code=409, detail="uploaded output was not found")
+    if actual_size > settings.max_output_bytes:
+        store.delete_media(job_id, "output.mp3")
+        raise HTTPException(status_code=413, detail="uploaded output is too large")
     if actual_size != payload.size_bytes:
+        store.delete_media(job_id, "output.mp3")
         raise HTTPException(status_code=409, detail="uploaded output size does not match")
     store.set_status(
         job_id,
@@ -625,7 +647,7 @@ def email_private_feed(job_id: str, request: Request) -> JSONResponse:
     )
     title = str(input_payload.get("episode_title") or "Edited episode")
     store.add_private_feed_item(token, job_id, title, size_bytes, user["id"])
-    feed_url = f"{str(request.base_url).rstrip('/')}/private-feed/{token}.xml"
+    feed_url = f"{canonical_base_url()}/private-feed/{token}.xml"
     try:
         send_private_feed_email(email, feed_url, settings)
     except (RuntimeError, httpx.HTTPError) as exc:
@@ -652,7 +674,7 @@ def private_feed(token: str, request: Request) -> Response:
     items = store.list_private_feed_items(token)
     if items is None:
         raise HTTPException(status_code=404, detail="private feed not found")
-    base_url = str(request.base_url).rstrip("/")
+    base_url = canonical_base_url()
     feed_url = f"{base_url}/private-feed/{token}.xml"
     item_xml = []
     for item in items:

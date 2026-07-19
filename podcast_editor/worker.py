@@ -3,6 +3,7 @@ import os
 import socket
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from .config import Settings, get_settings
@@ -35,6 +36,11 @@ class Worker:
     def poll_once(self, limit: int = 5) -> int:
         self.require_supabase()
         assert self.store.cloud is not None
+        self.store.cloud.release_stale_jobs(
+            [JobStatus.ingesting, JobStatus.splicing],
+            datetime.now(timezone.utc)
+            - timedelta(minutes=self.settings.worker_stale_lease_minutes),
+        )
         jobs = self.store.cloud.list_available_jobs(
             [JobStatus.queued, JobStatus.splicing], limit=limit
         )

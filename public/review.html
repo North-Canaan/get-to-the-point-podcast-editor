@@ -372,7 +372,12 @@
 
       function triggerJobAdvance(jobId) {
         if (state.advancePromise && state.advanceJobId === jobId) return;
-        const request = fetch(`/jobs/${jobId}/advance`, { method: "POST" })
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 330000);
+        const request = fetch(`/jobs/${jobId}/advance`, {
+          method: "POST",
+          signal: controller.signal
+        })
           .then((response) => {
             if (!response.ok && response.status !== 202) {
               throw new Error(`Processing request failed: ${response.status}`);
@@ -380,6 +385,7 @@
           })
           .catch((error) => console.error("Job advance failed", error))
           .finally(() => {
+            window.clearTimeout(timeout);
             if (state.advancePromise === request) {
               state.advancePromise = null;
               state.advanceJobId = "";

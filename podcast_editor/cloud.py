@@ -150,6 +150,24 @@ class SupabaseClient:
             response.raise_for_status()
             return bool(response.json())
 
+    def release_job(self, job_id: str, worker_id: str) -> bool:
+        """Release a lease only if this worker still owns it."""
+        headers = {
+            **self.headers,
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        encoded_worker_id = quote(worker_id, safe="")
+        with httpx.Client(timeout=20.0) as client:
+            response = client.patch(
+                f"{self.url}/rest/v1/jobs"
+                f"?id=eq.{job_id}&worker_id=eq.{encoded_worker_id}",
+                headers=headers,
+                json={"worker_id": None, "locked_at": None},
+            )
+            response.raise_for_status()
+            return bool(response.json())
+
     def list_available_jobs(self, statuses: list[JobStatus], limit: int = 5) -> list[dict[str, Any]]:
         status_values = ",".join(status.value for status in statuses)
         with httpx.Client(timeout=20.0) as client:
@@ -164,6 +182,26 @@ class SupabaseClient:
             )
             response.raise_for_status()
             return response.json()
+
+    def release_stale_jobs(self, statuses: list[JobStatus], stale_before: datetime) -> int:
+        """Recover abandoned worker leases without touching active or completed jobs."""
+        status_values = ",".join(status.value for status in statuses)
+        encoded_before = quote(stale_before.isoformat(), safe="")
+        headers = {
+            **self.headers,
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        with httpx.Client(timeout=20.0) as client:
+            response = client.patch(
+                f"{self.url}/rest/v1/jobs"
+                f"?status=in.({status_values})"
+                f"&worker_id=not.is.null&locked_at=lt.{encoded_before}",
+                headers=headers,
+                json={"worker_id": None, "locked_at": None},
+            )
+            response.raise_for_status()
+            return len(response.json())
 
     def upload_artifact(self, job_id: str, name: str, path: Path, content_type: str) -> None:
         object_path = f"{job_id}/{name}"
@@ -243,6 +281,16 @@ class SupabaseClient:
             if signed_url.startswith("http"):
                 return signed_url
             return f"{self.url}/storage/v1{signed_url}"
+
+    def delete_artifact(self, job_id: str, name: str) -> None:
+        object_path = quote(f"{job_id}/{name}", safe="/")
+        with httpx.Client(timeout=20.0) as client:
+            response = client.delete(
+                f"{self.url}/storage/v1/object/{self.bucket}/{object_path}",
+                headers=self.headers,
+            )
+            if not storage_object_not_found(response):
+                response.raise_for_status()
 
     def upsert_feed(self, url: str, title: str, episode_count: int) -> None:
         headers = {

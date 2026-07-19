@@ -2,6 +2,7 @@ import json
 import re
 from typing import Any
 
+from anthropic import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 from anthropic import Anthropic
 
 from ..config import Settings
@@ -35,6 +36,11 @@ Write every "reason" field in the episode's declared language. Return ONLY valid
 ```"""
 
 MAX_HIGHLIGHT_RESPONSE_TOKENS = 20000
+HIGHLIGHT_PROVIDER_TIMEOUT_SECONDS = 240.0
+
+
+class RetryableHighlightDetectionError(RuntimeError):
+    """A provider failure that should leave the job available for another attempt."""
 
 
 def detect_highlights(
@@ -51,24 +57,28 @@ def detect_highlights(
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is required for highlight detection")
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = Anthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=HIGHLIGHT_PROVIDER_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
     selection = {"mode": "library", "prompt_version": PROMPT_VERSION}
     language = str(input_payload.get("language") or "en")
-    response_text = call_claude(
-        client, settings.anthropic_model, transcript, language=language, selection=selection
-    )
     try:
-        payload = parse_json_response(response_text)
-    except ValueError:
         response_text = call_claude(
-            client,
-            settings.anthropic_model,
-            transcript,
-            language=language,
-            selection=selection,
-            reminder="Return only valid JSON. Do not include markdown fences or commentary.",
+            client, settings.anthropic_model, transcript, language=language, selection=selection
         )
         payload = parse_json_response(response_text)
+    except (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError) as exc:
+        raise RetryableHighlightDetectionError(
+            "Highlight provider is temporarily unavailable; the job will retry."
+        ) from exc
+    except ValueError as exc:
+        # Do not spend the remainder of the serverless request on a second 20k-token
+        # generation. Release the lease and retry in a fresh invocation instead.
+        raise RetryableHighlightDetectionError(
+            "Highlight response was incomplete; the job will retry."
+        ) from exc
 
     enriched = enrich_highlights(payload, transcript["segments"], selection)
     store.write_json(job_id, "highlights", enriched)
@@ -81,7 +91,6 @@ def call_claude(
     transcript: dict,
     language: str = "en",
     selection: dict | None = None,
-    reminder: str | None = None,
 ) -> str:
     content = json.dumps(
         {
@@ -91,8 +100,6 @@ def call_claude(
         },
         ensure_ascii=False,
     )
-    if reminder:
-        content = f"{reminder}\n\n{content}"
     message = client.messages.create(
         model=model,
         max_tokens=MAX_HIGHLIGHT_RESPONSE_TOKENS,
