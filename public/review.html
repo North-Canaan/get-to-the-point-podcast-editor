@@ -937,11 +937,17 @@
           6,
           3
         );
+        startElapsedStatus(
+          "Starting the audio editor…",
+          (elapsed) => `Compiling the audio tools in this browser · ${elapsed} elapsed · this can take several minutes on the first run`,
+          `editor-compile:${state.jobId}`
+        );
         await withTimeout(
           ffmpeg.load({ classWorkerURL, coreURL, wasmURL }),
-          90_000,
+          300_000,
           "Audio editor initialization timed out"
         );
+        stopElapsedProgress();
 
         const selectedSeconds = orderedSegments.reduce(
           (total, segment) => total + Math.max(0, Number(segment.end) - Number(segment.start)),
