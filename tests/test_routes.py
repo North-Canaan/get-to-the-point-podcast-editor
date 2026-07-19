@@ -78,6 +78,33 @@ def test_job_state_includes_server_timing_when_available(monkeypatch, tmp_path: 
     assert payload["email_delivery_available"] is False
 
 
+def test_create_additional_edit_reuses_completed_analysis(monkeypatch, tmp_path: Path) -> None:
+    test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    source_id = new_job_id()
+    input_payload = {
+        "source_url": "https://cdn.example.test/episode.mp3",
+        "resolved_audio_url": "https://cdn.example.test/episode.mp3",
+        "episode_title": "One source, two edits",
+    }
+    transcript = {"duration": 30.0, "segments": []}
+    highlights = {"roles": {}, "topics": [], "selection": {}, "highlights": []}
+    test_store.write_json(source_id, "input", input_payload)
+    test_store.write_json(source_id, "transcript", transcript)
+    test_store.write_json(source_id, "highlights", highlights)
+    test_store.set_status(source_id, JobStatus.done)
+    monkeypatch.setattr(main_module, "store", test_store)
+
+    response = TestClient(app).post(f"/jobs/{source_id}/edits")
+
+    assert response.status_code == 200
+    new_id = response.json()["job_id"]
+    assert new_id != source_id
+    assert test_store.get_status(new_id).status == JobStatus.needs_review
+    assert test_store.read_json(new_id, "transcript") == transcript
+    assert test_store.read_json(new_id, "highlights") == highlights
+    assert test_store.read_json(new_id, "input")["derived_from_job_id"] == source_id
+
+
 def test_private_feed_serves_only_attached_edited_episode(monkeypatch, tmp_path: Path) -> None:
     test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
     monkeypatch.setattr(main_module, "store", test_store)

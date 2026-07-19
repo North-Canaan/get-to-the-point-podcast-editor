@@ -378,6 +378,37 @@ def submit_review(job_id: str, review: ReviewRequest, request: Request) -> JSONR
     return JSONResponse({"ok": True, "job_id": job_id})
 
 
+@app.post("/jobs/{job_id}/edits", response_model=CreateJobResponse)
+def create_additional_edit(job_id: str, request: Request) -> CreateJobResponse:
+    job_record = authorize_job_access(request, job_id)
+    input_payload = store.read_json(job_id, "input")
+    transcript = store.read_json(job_id, "transcript")
+    highlights = store.read_json(job_id, "highlights")
+    if not input_payload or not transcript or not highlights:
+        raise HTTPException(status_code=409, detail="episode is not ready for another edit")
+
+    new_id = new_job_id()
+    cloned_input = {**input_payload, "derived_from_job_id": job_id}
+    store.write_json(new_id, "input", cloned_input)
+    store.write_json(new_id, "transcript", transcript)
+    store.write_json(new_id, "highlights", highlights)
+    extra = {
+        key: value
+        for key, value in {
+            "user_id": job_record.get("user_id"),
+            "episode_title": cloned_input.get("episode_title"),
+        }.items()
+        if value is not None
+    }
+    store.set_status(
+        new_id,
+        JobStatus.needs_review,
+        source_url=cloned_input.get("source_url") or job_record.get("source_url"),
+        extra=extra or None,
+    )
+    return CreateJobResponse(job_id=new_id)
+
+
 @app.post("/jobs/{job_id}/highlights")
 def select_highlights(
     job_id: str, payload: HighlightSelectionRequest, request: Request

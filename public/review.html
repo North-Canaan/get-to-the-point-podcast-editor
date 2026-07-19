@@ -74,6 +74,7 @@
         <span class="selection-count" id="selection-count" aria-live="polite"></span>
         <button class="button" id="produce" hidden type="button">Create edited episode</button>
         <a class="button secondary" id="output-link" hidden>Download edited episode</a>
+        <button class="button secondary" id="new-edit" hidden type="button">Create new edited episode</button>
         <button class="button" id="podcast-feed-action" hidden type="button">Add to podcast app</button>
       </div>
       <section class="listening-card" id="listening-card" hidden aria-labelledby="listening-title">
@@ -144,6 +145,7 @@
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
       const outputLink = document.querySelector("#output-link");
+      const newEdit = document.querySelector("#new-edit");
       const podcastFeedAction = document.querySelector("#podcast-feed-action");
       const listeningCard = document.querySelector("#listening-card");
       const editedEpisode = document.querySelector("#edited-episode");
@@ -207,6 +209,7 @@
       });
 
       emailFeed.addEventListener("click", emailPrivateFeed);
+      newEdit.addEventListener("click", createAdditionalEdit);
       selectAllHighlights.addEventListener("click", () => setVisibleHighlightDecisions("approve"));
       unselectAllHighlights.addEventListener("click", () => setVisibleHighlightDecisions(""));
 
@@ -215,6 +218,7 @@
         const minutes = Math.max(1, Math.min(120, Number(targetMinutes.value) || 15));
         const previousOutputReady = !outputLink.hidden;
         outputLink.hidden = true;
+        newEdit.hidden = true;
         listeningCard.hidden = true;
         syncActions();
         updateHighlights.disabled = true;
@@ -537,6 +541,7 @@
         const outputUrl = `/jobs/${state.jobId}/output`;
         outputLink.href = outputUrl;
         outputLink.hidden = false;
+        newEdit.hidden = false;
         podcastFeedAction.hidden = false;
         editedEpisode.src = outputUrl;
         listeningCard.hidden = false;
@@ -569,6 +574,21 @@
 
       async function copyPrivateFeed() {
         await navigator.clipboard.writeText(privateFeedUrl.value);
+      }
+
+      async function createAdditionalEdit() {
+        newEdit.disabled = true;
+        newEdit.textContent = "Creating…";
+        try {
+          const response = await fetch(`/jobs/${state.jobId}/edits`, { method: "POST" });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || "Could not create another edit");
+          location.href = `/jobs/${payload.job_id}/review`;
+        } catch (error) {
+          setStatus("Could not create another edit.", error.message || "Please try again.", "error");
+          newEdit.disabled = false;
+          newEdit.textContent = "Create new edited episode";
+        }
       }
 
       async function openPodcastApp(app) {
