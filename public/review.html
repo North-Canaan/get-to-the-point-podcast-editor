@@ -869,8 +869,9 @@
             metadata.size_bytes - 1,
             Math.ceil((end / metadata.duration) * metadata.size_bytes)
           );
-          const bytes = await fetchWithProgress(
-            audioUrl,
+          const bytes = await fetchSameOriginAudioRange(
+            firstByte,
+            lastByte,
             (loaded, total) => {
               const fraction = total ? loaded / total : 0;
               setWorkingStatus(
@@ -878,17 +879,38 @@
                 `Highlight ${index + 1} of ${orderedSegments.length} · ${formatBytes(loaded)}`,
                 10 + ((index + fraction) / orderedSegments.length) * 80
               );
-            },
-            {
-              headers: { Range: `bytes=${firstByte}-${lastByte}` },
-              requirePartial: true,
-              maxBytes: 50 * 1024 * 1024
             }
           );
           chunks.push(bytes);
         }
         setWorkingStatus("Assembling the edited episode…", "Joining the selected audio ranges.", 94);
         return new Blob(chunks, { type: "audio/mpeg" });
+      }
+
+      async function fetchSameOriginAudioRange(firstByte, lastByte, onProgress) {
+        const chunkSize = 3_500_000;
+        const total = lastByte - firstByte + 1;
+        if (total > 50 * 1024 * 1024) throw new Error("The selected audio range is unexpectedly large");
+        const chunks = [];
+        let loaded = 0;
+        for (let start = firstByte; start <= lastByte; start += chunkSize) {
+          const end = Math.min(lastByte, start + chunkSize - 1);
+          const response = await fetch(
+            `/jobs/${state.jobId}/audio-range?start=${start}&end=${end}`
+          );
+          if (!response.ok) throw new Error(`Audio range fetch failed: ${response.status}`);
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          chunks.push(bytes);
+          loaded += bytes.byteLength;
+          onProgress(loaded, total);
+        }
+        const output = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+          output.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return output;
       }
 
       async function fetchWithProgress(url, onProgress, options = {}) {

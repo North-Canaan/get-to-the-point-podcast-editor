@@ -334,6 +334,38 @@ def job_audio_metadata(job_id: str, request: Request) -> JSONResponse:
     )
 
 
+@app.get("/jobs/{job_id}/audio-range")
+def job_audio_range(
+    job_id: str,
+    request: Request,
+    start: int = Query(ge=0),
+    end: int = Query(ge=0),
+) -> Response:
+    authorize_job_access(request, job_id)
+    if end < start or end - start + 1 > 4_000_000:
+        raise HTTPException(status_code=422, detail="invalid audio range")
+    input_payload = store.read_json(job_id, "input") or {}
+    audio_url = input_payload.get("resolved_audio_url")
+    if not audio_url:
+        raise HTTPException(status_code=404, detail="audio not found")
+    try:
+        upstream = public_http_request(
+            "GET",
+            str(audio_url),
+            headers={"Range": f"bytes={start}-{end}"},
+            max_bytes=4_000_000,
+        )
+    except (httpx.HTTPError, HTTPException) as exc:
+        raise HTTPException(status_code=502, detail="could not fetch audio range") from exc
+    if upstream.status_code != 206:
+        raise HTTPException(status_code=502, detail="source audio does not support ranges")
+    return Response(
+        content=upstream.content,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
 @app.post("/jobs/{job_id}/review")
 def submit_review(job_id: str, review: ReviewRequest, request: Request) -> JSONResponse:
     try:
