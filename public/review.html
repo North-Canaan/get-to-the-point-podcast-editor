@@ -745,6 +745,14 @@
       }
 
       async function spliceInBrowser(audioUrl, orderedSegments) {
+        const metadataResponse = await fetch(`/jobs/${state.jobId}/audio-metadata`);
+        if (!metadataResponse.ok) throw new Error("Could not inspect the source audio");
+        const metadata = await metadataResponse.json();
+        if (metadata.size_bytes > 100 * 1024 * 1024) {
+          appendProduceLog(`Large source detected (${formatBytes(metadata.size_bytes)}); using lossless ranged editing.`);
+          return spliceLargeEpisodeRanges(audioUrl, orderedSegments, metadata);
+        }
+
         appendProduceLog("Loading ffmpeg.wasm...");
         const ffmpeg = new FFmpeg();
         ffmpeg.on("log", ({ message }) => appendProduceLog(message));
@@ -783,22 +791,14 @@
           "Audio editor initialization timed out"
         );
 
-        const metadataResponse = await fetch(`/jobs/${state.jobId}/audio-metadata`);
-        if (!metadataResponse.ok) throw new Error("Could not inspect the source audio");
-        const metadata = await metadataResponse.json();
-        const useRangedClips = metadata.size_bytes > 100 * 1024 * 1024;
-        if (!useRangedClips) {
-          appendProduceLog("Downloading source audio...");
-          setWorkingStatus("Downloading the source episode…", "This is usually the longest download step.", 10);
-          const audioBytes = await fetchWithProgress(audioUrl, (loaded, total) => {
-            const label = total ? `${formatBytes(loaded)} / ${formatBytes(total)}` : `${formatBytes(loaded)}`;
-            const percent = total ? 10 + (loaded / total) * 20 : null;
-            setWorkingStatus("Downloading the source episode…", label, percent);
-          });
-          await ffmpeg.writeFile("input.mp3", audioBytes);
-        } else {
-          appendProduceLog(`Large source detected (${formatBytes(metadata.size_bytes)}); downloading highlight ranges only.`);
-        }
+        appendProduceLog("Downloading source audio...");
+        setWorkingStatus("Downloading the source episode…", "This is usually the longest download step.", 10);
+        const audioBytes = await fetchWithProgress(audioUrl, (loaded, total) => {
+          const label = total ? `${formatBytes(loaded)} / ${formatBytes(total)}` : `${formatBytes(loaded)}`;
+          const percent = total ? 10 + (loaded / total) * 20 : null;
+          setWorkingStatus("Downloading the source episode…", label, percent);
+        });
+        await ffmpeg.writeFile("input.mp3", audioBytes);
 
         const clipNames = [];
         for (const [index, segment] of orderedSegments.entries()) {
@@ -807,39 +807,6 @@
           const duration = Math.max(0, end - start);
           const fadeOutStart = Math.max(0, duration - FADE_SECONDS);
           const name = `clip_${String(index).padStart(3, "0")}.mp3`;
-          let inputName = "input.mp3";
-          let inputStart = start;
-          if (useRangedClips) {
-            const margin = 45;
-            const windowStart = Math.max(0, start - margin);
-            const windowEnd = Math.min(metadata.duration, end + margin);
-            const firstByte = Math.floor((windowStart / metadata.duration) * metadata.size_bytes);
-            const lastByte = Math.min(
-              metadata.size_bytes - 1,
-              Math.ceil((windowEnd / metadata.duration) * metadata.size_bytes)
-            );
-            inputName = `source_${String(index).padStart(3, "0")}.mp3`;
-            inputStart = start - windowStart;
-            setWorkingStatus(
-              "Downloading selected audio…",
-              `Highlight ${index + 1} of ${orderedSegments.length}.`,
-              10 + (index / orderedSegments.length) * 20
-            );
-            const rangedBytes = await fetchWithProgress(
-              audioUrl,
-              (loaded, total) => {
-                const span = 20 / orderedSegments.length;
-                const fraction = total ? loaded / total : 0;
-                setWorkingStatus(
-                  "Downloading selected audio…",
-                  `Highlight ${index + 1} of ${orderedSegments.length} · ${formatBytes(loaded)}`,
-                  10 + (index / orderedSegments.length) * 20 + fraction * span
-                );
-              },
-              { headers: { Range: `bytes=${firstByte}-${lastByte}` }, requirePartial: true, maxBytes: 50 * 1024 * 1024 }
-            );
-            await ffmpeg.writeFile(inputName, rangedBytes);
-          }
           clipNames.push(name);
           state.progressBase = 30 + (index / orderedSegments.length) * 55;
           state.progressSpan = 55 / orderedSegments.length;
@@ -850,11 +817,11 @@
           );
           await ffmpeg.exec([
             "-ss",
-            inputStart.toFixed(3),
+            start.toFixed(3),
             "-t",
             duration.toFixed(3),
             "-i",
-            inputName,
+            "input.mp3",
             "-af",
             `afade=t=in:st=0:d=${FADE_SECONDS},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${FADE_SECONDS}`,
             "-c:a",
@@ -863,7 +830,6 @@
             "128k",
             name
           ]);
-          if (useRangedClips) await ffmpeg.deleteFile(inputName);
         }
 
         await ffmpeg.writeFile(
@@ -888,6 +854,41 @@
         ]);
         const data = await ffmpeg.readFile("output.mp3");
         return new Blob([data.buffer], { type: "audio/mpeg" });
+      }
+
+      async function spliceLargeEpisodeRanges(audioUrl, orderedSegments, metadata) {
+        if (!(metadata.duration > 0) || !(metadata.size_bytes > 0)) {
+          throw new Error("The source audio duration is unavailable");
+        }
+        const chunks = [];
+        for (const [index, segment] of orderedSegments.entries()) {
+          const start = Math.max(0, Number(segment.start) - PADDING_SECONDS);
+          const end = Math.min(metadata.duration, Number(segment.end) + PADDING_SECONDS);
+          const firstByte = Math.floor((start / metadata.duration) * metadata.size_bytes);
+          const lastByte = Math.min(
+            metadata.size_bytes - 1,
+            Math.ceil((end / metadata.duration) * metadata.size_bytes)
+          );
+          const bytes = await fetchWithProgress(
+            audioUrl,
+            (loaded, total) => {
+              const fraction = total ? loaded / total : 0;
+              setWorkingStatus(
+                "Downloading selected audio…",
+                `Highlight ${index + 1} of ${orderedSegments.length} · ${formatBytes(loaded)}`,
+                10 + ((index + fraction) / orderedSegments.length) * 80
+              );
+            },
+            {
+              headers: { Range: `bytes=${firstByte}-${lastByte}` },
+              requirePartial: true,
+              maxBytes: 50 * 1024 * 1024
+            }
+          );
+          chunks.push(bytes);
+        }
+        setWorkingStatus("Assembling the edited episode…", "Joining the selected audio ranges.", 94);
+        return new Blob(chunks, { type: "audio/mpeg" });
       }
 
       async function fetchWithProgress(url, onProgress, options = {}) {
