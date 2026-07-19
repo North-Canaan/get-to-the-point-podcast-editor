@@ -127,9 +127,9 @@ def public_http_request(
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
-        "form-action 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; "
+        "form-action 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; "
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-        "media-src 'self' blob: https:; connect-src 'self' https://unpkg.com https://*.supabase.co; "
+        "media-src 'self' blob: https:; connect-src 'self' https://*.supabase.co; "
         "worker-src 'self' blob:; manifest-src 'self'; upgrade-insecure-requests"
     ),
     "Cross-Origin-Opener-Policy": "same-origin",

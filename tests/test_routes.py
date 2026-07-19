@@ -22,6 +22,13 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
     assert "/jobs/{job_id}/output-upload-url" in route_paths
     assert "/jobs/{job_id}/output-complete" in route_paths
     assert "/jobs/{job_id}/private-feed/email" in route_paths
+    vercel_csp = next(
+        header["value"]
+        for rule in config["headers"]
+        for header in rule["headers"]
+        if header["key"] == "Content-Security-Policy"
+    )
+    assert vercel_csp == main_module.SECURITY_HEADERS["Content-Security-Policy"]
 
 
 def test_anonymous_user_can_start_episode_when_auth_is_configured(
@@ -76,6 +83,44 @@ def test_job_state_includes_server_timing_when_available(monkeypatch, tmp_path: 
     assert payload["created_at"] == "2026-07-18T10:00:00+00:00"
     assert payload["status_updated_at"] == "2026-07-18T10:05:00+00:00"
     assert payload["email_delivery_available"] is False
+
+
+def test_job_state_recovers_stale_browser_splice(monkeypatch, tmp_path: Path) -> None:
+    test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    job_id = new_job_id()
+    test_store.write_json(job_id, "input", {"episode_title": "Retry this edit"})
+    test_store.write_json(job_id, "transcript", {"duration": 10.0, "segments": []})
+    test_store.write_json(
+        job_id,
+        "highlights",
+        {"roles": {}, "topics": [], "selection": {}, "highlights": []},
+    )
+    test_store.set_status(job_id, JobStatus.splicing)
+    monkeypatch.setattr(main_module, "store", test_store)
+    monkeypatch.setattr(
+        test_store,
+        "get_job_record",
+        lambda _job_id: {"updated_at": "2020-01-01T00:00:00+00:00"},
+    )
+
+    payload = TestClient(app).get(f"/jobs/{job_id}/state").json()
+
+    assert payload["status"] == "needs_review"
+
+
+def test_job_state_finalizes_uploaded_output_after_lost_confirmation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    job_id = new_job_id()
+    test_store.write_json(job_id, "input", {"episode_title": "Recovered output"})
+    test_store.artifact_path(job_id, "output").write_bytes(b"finished-audio")
+    test_store.set_status(job_id, JobStatus.splicing)
+    monkeypatch.setattr(main_module, "store", test_store)
+
+    payload = TestClient(app).get(f"/jobs/{job_id}/state").json()
+
+    assert payload["status"] == "done"
 
 
 def test_create_additional_edit_reuses_completed_analysis(monkeypatch, tmp_path: Path) -> None:

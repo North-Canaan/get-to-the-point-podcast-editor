@@ -59,6 +59,7 @@ def test_security_headers_are_set(monkeypatch, tmp_path: Path) -> None:
     assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    assert "'wasm-unsafe-eval'" in response.headers["content-security-policy"]
 
 
 def test_owned_job_is_hidden_from_another_user(monkeypatch, tmp_path: Path) -> None:

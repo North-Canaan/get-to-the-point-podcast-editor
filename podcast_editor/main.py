@@ -1,5 +1,5 @@
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 import re
 from xml.sax.saxutils import escape
@@ -252,6 +252,26 @@ def job_state(job_id: str, request: Request) -> StateResponse:
     job_record = authorize_job_access(request, job_id)
     advance_no_worker_job(job_id, store, settings)
     status = store.get_status(job_id)
+    if status.status == JobStatus.splicing:
+        try:
+            output_size = store.artifact_size(job_id, "output")
+        except httpx.HTTPError:
+            output_size = None
+        if output_size:
+            store.set_status(
+                job_id,
+                JobStatus.done,
+                extra={
+                    "output_storage_path": f"{job_id}/output.mp3",
+                    "output_size_bytes": output_size,
+                },
+            )
+            status = store.get_status(job_id)
+            job_record = store.get_job_record(job_id) or job_record
+        elif job_status_is_stale(job_record.get("updated_at"), minutes=15):
+            store.set_status(job_id, JobStatus.needs_review)
+            status = store.get_status(job_id)
+            job_record = store.get_job_record(job_id) or job_record
     transcript = None
     highlights = None
     if status.status not in {JobStatus.queued, JobStatus.ingesting, JobStatus.transcribing}:
@@ -275,6 +295,19 @@ def job_state(job_id: str, request: Request) -> StateResponse:
         transcript=transcript,
         highlights=highlights,
     )
+
+
+def job_status_is_stale(updated_at: object, minutes: int) -> bool:
+    if not updated_at:
+        return False
+    try:
+        value = str(updated_at).replace("Z", "+00:00")
+        updated = datetime.fromisoformat(value)
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - updated > timedelta(minutes=minutes)
 
 
 @app.get("/jobs/{job_id}/review", include_in_schema=False)
