@@ -215,6 +215,7 @@ def test_private_feed_serves_only_attached_edited_episode(monkeypatch, tmp_path:
     assert feed.status_code == 200
     assert "A useful conversation" in feed.text
     assert f"/private-feed/{token}/episodes/{job_id}.mp3" in feed.text
+    assert f"<guid isPermaLink=\"false\">{job_id}-" in feed.text
 
     episode = client.get(f"/private-feed/{token}/episodes/{job_id}.mp3")
     assert episode.status_code == 200

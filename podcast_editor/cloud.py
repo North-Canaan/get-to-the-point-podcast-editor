@@ -372,7 +372,7 @@ class SupabaseClient:
             response = client.get(
                 f"{self.url}/rest/v1/private_feed_items"
                 f"?feed_id=eq.{feed['id']}"
-                f"&select=job_id,title,size_bytes,published_at"
+                f"&select=job_id,title,size_bytes,published_at,updated_at"
                 f"&order=published_at.desc",
                 headers=self.headers,
             )

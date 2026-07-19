@@ -680,11 +680,12 @@ def private_feed(token: str, request: Request) -> Response:
     for item in items:
         job_id = str(item["job_id"])
         published = parse_feed_datetime(str(item.get("published_at") or ""))
+        revision = re.sub(r"[^0-9]", "", str(item.get("updated_at") or "")) or "1"
         enclosure_url = f"{base_url}/private-feed/{token}/episodes/{job_id}.mp3"
         item_xml.append(
             "<item>"
             f"<title>{escape(str(item.get('title') or 'Edited episode'))}</title>"
-            f'<guid isPermaLink="false">{escape(job_id)}</guid>'
+            f'<guid isPermaLink="false">{escape(job_id)}-{revision}</guid>'
             f"<pubDate>{format_datetime(published)}</pubDate>"
             f'<enclosure url="{escape(enclosure_url)}" '
             f'length="{int(item.get("size_bytes") or 0)}" type="audio/mpeg"/>'
