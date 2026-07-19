@@ -219,6 +219,11 @@ def test_private_feed_serves_only_attached_edited_episode(monkeypatch, tmp_path:
     episode = client.get(f"/private-feed/{token}/episodes/{job_id}.mp3")
     assert episode.status_code == 200
     assert episode.content == b"edited-audio"
+    episode_head = client.head(f"/private-feed/{token}/episodes/{job_id}.mp3")
+    assert episode_head.status_code == 200
+    assert episode_head.headers["content-type"] == "audio/mpeg"
+    assert episode_head.headers["content-length"] == str(len(b"edited-audio"))
+    assert episode_head.content == b""
     denied = client.get(f"/private-feed/{'x' * 43}/episodes/{job_id}.mp3")
     assert denied.status_code == 404
 

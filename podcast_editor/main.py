@@ -719,13 +719,34 @@ def private_feed_episode(token: str, job_id: str) -> Response:
     return _job_output_response(job_id)
 
 
-def _job_output_response(job_id: str) -> Response:
+@app.head("/private-feed/{token}/episodes/{job_id}.mp3")
+def private_feed_episode_head(token: str, job_id: str) -> Response:
+    validate_private_feed_token(token)
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="episode not found") from None
+    if not store.private_feed_contains(token, job_id):
+        raise HTTPException(status_code=404, detail="episode not found")
+    return _job_output_response(job_id, head_only=True)
+
+
+def _job_output_response(job_id: str, head_only: bool = False) -> Response:
     output = store.artifact_path(job_id, "output")
     if not output.exists():
         signed_url = store.signed_media_url(job_id, "output.mp3")
         if signed_url:
-            return RedirectResponse(signed_url)
+            return RedirectResponse(signed_url, headers={"Content-Type": "audio/mpeg"})
         raise HTTPException(status_code=404, detail="output not found")
+    if head_only:
+        return Response(
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(output.stat().st_size),
+                "Content-Type": "audio/mpeg",
+                "X-Robots-Tag": "noindex, nofollow",
+            }
+        )
     return FileResponse(
         output,
         media_type="audio/mpeg",
@@ -742,6 +763,16 @@ def job_output(job_id: str, request: Request) -> Response:
         raise HTTPException(status_code=404, detail="output not found") from None
     authorize_job_access(request, job_id)
     return _job_output_response(job_id)
+
+
+@app.head("/jobs/{job_id}/output")
+def job_output_head(job_id: str, request: Request) -> Response:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="output not found") from None
+    authorize_job_access(request, job_id)
+    return _job_output_response(job_id, head_only=True)
 
 
 def validate_private_feed_token(token: str) -> str:
