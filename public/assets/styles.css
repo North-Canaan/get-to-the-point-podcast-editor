@@ -682,6 +682,18 @@ main section {
   gap: 8px;
 }
 
+.topic-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.topic-bulk-actions .button {
+  min-height: 40px;
+  padding: 7px 12px;
+}
+
 .topic-option input {
   position: absolute;
   opacity: 0;

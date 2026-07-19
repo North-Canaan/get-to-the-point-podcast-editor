@@ -58,6 +58,10 @@
         <fieldset>
           <legend>Topic</legend>
           <div class="topic-options" id="topic-options"></div>
+          <div class="topic-bulk-actions" aria-label="Bulk highlight selection">
+            <button class="button secondary" id="select-all-highlights" type="button">Select all</button>
+            <button class="button secondary" id="unselect-all-highlights" type="button">Unselect all</button>
+          </div>
         </fieldset>
         <label class="length-control" for="target-minutes" hidden>
           <span>Edited episode length</span>
@@ -130,6 +134,8 @@
       const audioWrap = document.querySelector("#audio-wrap");
       const highlightControls = document.querySelector("#highlight-controls");
       const topicOptions = document.querySelector("#topic-options");
+      const selectAllHighlights = document.querySelector("#select-all-highlights");
+      const unselectAllHighlights = document.querySelector("#unselect-all-highlights");
       const targetMinutes = document.querySelector("#target-minutes");
       const updateHighlights = document.querySelector("#update-highlights");
       const produceActions = document.querySelector("#produce-actions");
@@ -201,6 +207,8 @@
       });
 
       emailFeed.addEventListener("click", emailPrivateFeed);
+      selectAllHighlights.addEventListener("click", () => setVisibleHighlightDecisions("approve"));
+      unselectAllHighlights.addEventListener("click", () => setVisibleHighlightDecisions(""));
 
       updateHighlights.addEventListener("click", async () => {
         const selectedTopic = document.querySelector('input[name="highlight-topic"]:checked')?.value || "";
@@ -399,6 +407,15 @@
         syncActions();
       }
 
+      function setVisibleHighlightDecisions(decision) {
+        state.highlights.forEach((item) => {
+          const current = state.decisions.get(item.id);
+          if (current) current.decision = decision;
+        });
+        renderHighlights();
+        syncActions();
+      }
+
       function renderJobStatus(payload) {
         const messages = {
           queued: ["Starting episode…", "Submitting the audio for transcription."],
@@ -505,6 +522,8 @@
         const hasApproval = selectedTotal > 0;
         const hasHighlights = state.highlights.length > 0;
         const outputReady = !outputLink.hidden;
+        selectAllHighlights.disabled = !hasHighlights;
+        unselectAllHighlights.disabled = !hasHighlights;
         selectionCount.textContent = hasApproval
           ? `${selectedTotal} ${selectedTotal === 1 ? "highlight" : "highlights"} selected`
           : "Select at least one highlight to continue";
