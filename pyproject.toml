@@ -28,6 +28,9 @@ worker = [
 [project.scripts]
 podcast-worker = "podcast_editor.worker:main"
 
+[tool.setuptools.packages.find]
+include = ["podcast_editor*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
