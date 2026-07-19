@@ -7,15 +7,19 @@ from anthropic import Anthropic
 from ..config import Settings
 from ..jobs import JobStore
 
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 
 SYSTEM_PROMPT = """You are editing a long, unedited podcast into a tight highlight reel. You will receive the language declared by the podcast's RSS feed and a diarized transcript: a list of segments, each with an id, start/end time in seconds, a speaker label, and text, plus editorial preferences.
 
 First, infer the conversational roles. The host/interviewer is the speaker who asks questions, introduces topics, and steers; the guest(s) answer at length and supply the substance. Return your role mapping.
 
-Identify 5–12 concise topic labels, written in the episode's declared language, that collectively describe the substantive topics covered in the episode.
+Identify concise topic labels, written in the episode's declared language, that collectively describe the substantive topics covered in the episode. Use a stable, canonical label for each topic.
 
-Then select the highlight-worthy moments. You are optimizing for a listener who wants the guest's actual insight and none of the host's filler. Prioritize segments where the guest: makes a substantive or surprising claim, reveals specific first-hand detail, pushes back or disagrees, or delivers a self-contained idea that moves the conversation forward. Down-weight host monologues, small talk, throat-clearing, repetition, ad reads, and crosstalk. Keep the interviewer only when their question is required to make the guest's answer intelligible. Aim for the requested total duration. If a topic is selected, exclude unrelated moments and include every substantive highlight about that topic, using the duration as a target rather than inventing or truncating material.
+Then build an exhaustive highlight library. For a long episode this may contain 50–100 highlights; do not stop after finding only the best few and do not optimize for a total edit duration. Capture every distinct, substantive, self-contained moment that a human editor might reasonably choose. Split long discussions into separate highlights when they contain multiple independently useful ideas, but do not create duplicates or filler.
+
+Prioritize moments where the guest makes a substantive or surprising claim, reveals specific first-hand detail, pushes back or disagrees, explains a mechanism, tells a meaningful story, or delivers a self-contained idea that moves the conversation forward. Down-weight host monologues, small talk, throat-clearing, repetition, ad reads, and crosstalk. Keep the interviewer only when their question is required to make the guest's answer intelligible.
+
+Assign every highlight exactly one canonical topic label from the top-level topics list. Topic labels are navigation filters for the highlight library, so every topic should have at least one highlight and every highlight must belong to a topic.
 
 Prefer segments that stand on their own. When a strong answer starts a few seconds before or after a segment boundary, extend the start/end to capture the complete thought. Order them by importance, not by timestamp.
 
@@ -25,12 +29,12 @@ Write every "reason" field in the episode's declared language. Return ONLY valid
   "roles": { "SPEAKER_00": "host" | "guest" | "other", ... },
   "topics": ["<topic in the episode language>", ...],
   "highlights": [
-    { "start": <number>, "end": <number>, "speaker": "<label>", "reason": "<hebrew string>", "score": <1-10> }
+    { "start": <number>, "end": <number>, "speaker": "<label>", "topic": "<exact topic label from topics>", "reason": "<hebrew string>", "score": <1-10> }
   ]
 }
 ```"""
 
-MAX_HIGHLIGHT_RESPONSE_TOKENS = 12000
+MAX_HIGHLIGHT_RESPONSE_TOKENS = 20000
 
 
 def detect_highlights(
@@ -48,7 +52,7 @@ def detect_highlights(
         raise RuntimeError("ANTHROPIC_API_KEY is required for highlight detection")
 
     client = Anthropic(api_key=settings.anthropic_api_key)
-    selection = {"topic": topic, "target_minutes": target_minutes, "prompt_version": PROMPT_VERSION}
+    selection = {"mode": "library", "prompt_version": PROMPT_VERSION}
     language = str(input_payload.get("language") or "en")
     response_text = call_claude(
         client, settings.anthropic_model, transcript, language=language, selection=selection
@@ -127,14 +131,19 @@ def enrich_highlights(
                 "start": start,
                 "end": end,
                 "speaker": str(highlight["speaker"]),
+                "topic": str(highlight.get("topic") or "Other"),
                 "reason": str(highlight["reason"]),
                 "score": int(highlight["score"]),
                 "text": matching_text(transcript_segments, start, end),
             }
         )
+    topics = [str(topic) for topic in payload.get("topics", [])]
+    for highlight in highlights:
+        if highlight["topic"] not in topics:
+            topics.append(highlight["topic"])
     return {
         "roles": payload.get("roles", {}),
-        "topics": [str(topic) for topic in payload.get("topics", [])],
+        "topics": topics,
         "selection": selection or {},
         "highlights": highlights,
     }

@@ -35,6 +35,7 @@ def test_enrich_highlights_adds_ids_and_matching_text() -> None:
                 "start": 10.0,
                 "end": 20.0,
                 "speaker": "SPEAKER_00",
+                "topic": "יזמות",
                 "reason": "תובנה חשובה",
                 "score": 9,
             }
@@ -46,11 +47,12 @@ def test_enrich_highlights_adds_ids_and_matching_text() -> None:
         {"start": 25.0, "end": 30.0, "text": "לא רלוונטי"},
     ]
 
-    selection = {"topic": "יזמות", "target_minutes": 10, "prompt_version": 3}
+    selection = {"mode": "library", "prompt_version": 4}
     enriched = enrich_highlights(payload, transcript, selection)
 
     assert enriched["highlights"][0]["id"] == "h01"
     assert enriched["highlights"][0]["text"] == "פתיחה הרעיון המרכזי"
+    assert enriched["highlights"][0]["topic"] == "יזמות"
     assert enriched["topics"] == ["יזמות", "מימון"]
     assert enriched["selection"] == selection
 

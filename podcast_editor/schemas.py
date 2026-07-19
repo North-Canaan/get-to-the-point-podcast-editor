@@ -82,6 +82,7 @@ class HighlightCandidate(BaseModel):
     start: float
     end: float
     speaker: str
+    topic: str = "Other"
     reason: str
     score: int = Field(ge=1, le=10)
     text: str = ""

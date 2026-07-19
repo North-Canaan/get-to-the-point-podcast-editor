@@ -144,11 +144,7 @@ class JobStore:
             if transcript:
                 highlights = self.cloud.download_json_artifact(source_job_id, "highlights.json")
                 selection = (highlights or {}).get("selection", {})
-                if highlights and selection == {
-                    "topic": None,
-                    "target_minutes": 15,
-                    "prompt_version": 3,
-                }:
+                if highlights and selection == {"mode": "library", "prompt_version": 4}:
                     return transcript, highlights, source_job_id
                 if transcript_only is None:
                     transcript_only = (transcript, None, source_job_id)

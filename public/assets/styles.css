@@ -337,9 +337,48 @@ a {
   border-color: var(--accent);
 }
 
+.saved-feed.loading {
+  border-color: var(--accent);
+  cursor: wait;
+}
+
 .saved-feed span {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.saved-feed-loading {
+  display: grid;
+  gap: 8px;
+}
+
+.saved-feed-loading[hidden] {
+  display: none;
+}
+
+.saved-feed-loading-text {
+  color: var(--ink) !important;
+  font-size: 0.85rem !important;
+}
+
+.saved-feed-progress {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.saved-feed-progress::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: progress-slide 1.2s ease-in-out infinite;
+  content: "";
 }
 
 .episode-row {

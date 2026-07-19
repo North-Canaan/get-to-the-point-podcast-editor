@@ -145,6 +145,7 @@
       const feedProgress = document.querySelector("#feed-progress");
       const feedSubmit = form.querySelector('button[type="submit"]');
       let activityTimer;
+      let activeFeedCard;
 
       function text(value) {
         const node = document.createElement("span");
@@ -159,12 +160,13 @@
 
       async function loadEpisodes(feedUrl, triggerButton = null) {
         if (triggerButton) triggerButton.disabled = true;
+        const feedCard = triggerButton?.classList.contains("saved-feed") ? triggerButton : null;
         startActivity((elapsed, seconds) => {
           const detail = seconds < 15
             ? "Reading the RSS feed and finding its episodes"
             : "Still waiting for the podcast host to respond";
           return `${detail} · ${elapsed} elapsed`;
-        });
+        }, feedCard);
         section.hidden = true;
         try {
           const response = await fetch("/feeds/episodes", {
@@ -202,6 +204,7 @@
           loadLibrary(librarySearch.value);
         } catch (error) {
           status.textContent = error.message;
+          if (feedCard) libraryStatus.textContent = error.message;
         } finally {
           stopActivity();
           if (triggerButton) {
@@ -224,8 +227,19 @@
             const name = document.createElement("strong");
             name.textContent = feed.title;
             const count = document.createElement("span");
+            count.className = "saved-feed-count";
             count.textContent = `${feed.episode_count} episodes`;
-            button.append(name, count);
+            const loading = document.createElement("span");
+            loading.className = "saved-feed-loading";
+            loading.hidden = true;
+            loading.setAttribute("aria-live", "polite");
+            const loadingText = document.createElement("span");
+            loadingText.className = "saved-feed-loading-text";
+            const loadingBar = document.createElement("span");
+            loadingBar.className = "saved-feed-progress";
+            loadingBar.setAttribute("aria-hidden", "true");
+            loading.append(loadingText, loadingBar);
+            button.append(name, count, loading);
             button.addEventListener("click", () => {
               document.querySelector("#feed-url").value = feed.url;
               loadEpisodes(feed.url, button);
@@ -275,12 +289,23 @@
         }
       }
 
-      function startActivity(messageBuilder) {
+      function startActivity(messageBuilder, feedCard = null) {
         stopActivity();
+        activeFeedCard = feedCard;
+        if (activeFeedCard) {
+          activeFeedCard.classList.add("loading");
+          activeFeedCard.setAttribute("aria-busy", "true");
+          activeFeedCard.querySelector(".saved-feed-count").hidden = true;
+          activeFeedCard.querySelector(".saved-feed-loading").hidden = false;
+        }
         const startedAt = Date.now();
         const update = () => {
           const seconds = Math.floor((Date.now() - startedAt) / 1000);
-          status.textContent = messageBuilder(formatElapsed(seconds), seconds);
+          const message = messageBuilder(formatElapsed(seconds), seconds);
+          status.textContent = message;
+          if (activeFeedCard) {
+            activeFeedCard.querySelector(".saved-feed-loading-text").textContent = message;
+          }
           feedProgress.hidden = false;
         };
         update();
@@ -291,6 +316,15 @@
         if (activityTimer) window.clearInterval(activityTimer);
         activityTimer = null;
         feedProgress.hidden = true;
+        if (activeFeedCard) {
+          activeFeedCard.classList.remove("loading");
+          activeFeedCard.removeAttribute("aria-busy");
+          const count = activeFeedCard.querySelector(".saved-feed-count");
+          const loading = activeFeedCard.querySelector(".saved-feed-loading");
+          if (count) count.hidden = false;
+          if (loading) loading.hidden = true;
+          activeFeedCard = null;
+        }
       }
 
       function formatElapsed(totalSeconds) {

@@ -255,11 +255,7 @@ def select_highlights(job_id: str, request: HighlightSelectionRequest) -> JSONRe
         raise HTTPException(status_code=404, detail="job not found") from None
     if not store.read_json(job_id, "transcript"):
         raise HTTPException(status_code=409, detail="transcript is not ready")
-    selection = {
-        "topic": request.topic,
-        "target_minutes": request.target_minutes,
-        "prompt_version": PROMPT_VERSION,
-    }
+    selection = {"mode": "library", "prompt_version": PROMPT_VERSION}
     input_payload = store.read_json(job_id, "input") or {}
     audio_url = input_payload.get("resolved_audio_url")
     cached = store.find_cached_highlights(str(audio_url), selection) if audio_url else None
@@ -273,8 +269,6 @@ def select_highlights(job_id: str, request: HighlightSelectionRequest) -> JSONRe
             job_id,
             store,
             settings,
-            topic=request.topic,
-            target_minutes=request.target_minutes,
         )
     except Exception as exc:
         store.set_status(job_id, JobStatus.error, error=str(exc))
