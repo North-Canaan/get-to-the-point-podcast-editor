@@ -129,12 +129,14 @@ def enrich_highlights(
     payload: dict, transcript_segments: list[dict], selection: dict | None = None
 ) -> dict:
     highlights = []
-    for index, highlight in enumerate(payload.get("highlights", []), start=1):
+    for highlight in payload.get("highlights", []):
         start = float(highlight["start"])
         end = float(highlight["end"])
+        if not 0 <= start < end <= 86_400:
+            continue
         highlights.append(
             {
-                "id": f"h{index:02d}",
+                "id": f"h{len(highlights) + 1:02d}",
                 "start": start,
                 "end": end,
                 "speaker": str(highlight["speaker"]),

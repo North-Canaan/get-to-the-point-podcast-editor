@@ -291,7 +291,13 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ordered_segments: approved })
         });
-        if (!response.ok) throw new Error("Could not submit review");
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          const detail = typeof payload.detail === "string"
+            ? payload.detail
+            : `server returned ${response.status}`;
+          throw new Error(`Could not submit review: ${detail}`);
+        }
         startElapsedStatus(
           "Preparing the audio editor…",
           (elapsed) => `Loading the tools needed to create your episode · ${elapsed} elapsed`,
@@ -400,7 +406,14 @@
         highlightControls.hidden = false;
         processingState.classList.add("ready");
         document.querySelector("#review-title").textContent = "Review suggested highlights";
-        state.allHighlights = [...payload.highlights].sort((a, b) => b.score - a.score);
+        state.allHighlights = [...payload.highlights]
+          .filter((item) => {
+            const start = Number(item.start);
+            const end = Number(item.end);
+            return Number.isFinite(start) && Number.isFinite(end)
+              && start >= 0 && end > start && end <= 86400;
+          })
+          .sort((a, b) => b.score - a.score);
         state.highlights = [...state.allHighlights];
         state.decisions.clear();
         state.allHighlights.forEach((item) => {

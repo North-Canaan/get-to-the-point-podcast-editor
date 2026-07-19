@@ -61,6 +61,37 @@ def test_enrich_highlights_adds_ids_and_matching_text() -> None:
     assert enriched["selection"] == selection
 
 
+def test_enrich_highlights_drops_zero_length_and_invalid_ranges() -> None:
+    payload = {
+        "roles": {},
+        "topics": ["Topic"],
+        "highlights": [
+            {
+                "start": 10,
+                "end": 10,
+                "speaker": "SPEAKER_00",
+                "topic": "Topic",
+                "reason": "zero length",
+                "score": 8,
+            },
+            {
+                "start": 20,
+                "end": 25,
+                "speaker": "SPEAKER_00",
+                "topic": "Topic",
+                "reason": "valid",
+                "score": 7,
+            },
+        ],
+    }
+
+    enriched = enrich_highlights(payload, [], {"mode": "library"})
+
+    assert len(enriched["highlights"]) == 1
+    assert enriched["highlights"][0]["id"] == "h01"
+    assert enriched["highlights"][0]["reason"] == "valid"
+
+
 def test_call_claude_avoids_deprecated_temperature_parameter() -> None:
     captured = {}
 
