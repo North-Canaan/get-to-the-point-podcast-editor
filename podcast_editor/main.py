@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from email.utils import format_datetime
 from xml.sax.saxutils import escape
 
+import httpx
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
@@ -16,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .auth import current_user, optional_current_user, personal_feed_token
 from .jobs import JobStore, new_job_id, validate_job_id
+from .email_delivery import send_private_feed_email
 from .pipeline.no_worker import advance_no_worker_job, submit_no_worker_job
 from .pipeline.ingest import IngestError, list_feed_episodes
 from .schemas import (
@@ -40,6 +42,15 @@ app = FastAPI(title="Get To The Point Podcast Editor")
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
 if (PUBLIC_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=PUBLIC_DIR / "assets"), name="assets")
+
+
+def mask_email(email: str) -> str:
+    local, separator, domain = email.partition("@")
+    if not separator:
+        return email
+    visible = local[:1]
+    return f"{visible}{'•' * max(3, len(local) - 1)}@{domain}"
+
 
 INDEX_FALLBACK_HTML = """<!doctype html>
 <html lang="en">
@@ -139,7 +150,9 @@ def create_job(payload: CreateJobRequest, request: Request) -> CreateJobResponse
         submit_no_worker_job(job_id, payload.url, store, settings, payload.title, payload.language)
     except Exception as exc:
         store.set_status(job_id, JobStatus.error, error=str(exc), source_url=payload.url)
-        raise HTTPException(status_code=502, detail=f"Could not start episode processing: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Could not start episode processing: {exc}"
+        ) from exc
     return CreateJobResponse(job_id=job_id)
 
 
@@ -171,13 +184,22 @@ def job_state(job_id: str) -> StateResponse:
     highlights = None
     if status.status not in {JobStatus.queued, JobStatus.ingesting, JobStatus.transcribing}:
         transcript = store.read_json(job_id, "transcript")
-    if status.status in {JobStatus.needs_review, JobStatus.splicing, JobStatus.done, JobStatus.error}:
+    if status.status in {
+        JobStatus.needs_review,
+        JobStatus.splicing,
+        JobStatus.done,
+        JobStatus.error,
+    }:
         highlights = store.read_json(job_id, "highlights")
     input_payload = store.read_json(job_id, "input") or {}
+    job_record = store.get_job_record(job_id) or {}
     return StateResponse(
         job_id=job_id,
         status=status.status,
         error=status.error,
+        created_at=job_record.get("created_at"),
+        status_updated_at=job_record.get("updated_at"),
+        email_delivery_available=bool(settings.resend_api_key),
         episode_title=input_payload.get("episode_title"),
         transcript=transcript,
         highlights=highlights,
@@ -324,12 +346,45 @@ def add_job_to_private_feed(
     input_payload = store.read_json(job_id, "input") or {}
     job_record = store.get_job_record(job_id) or {}
     output = store.artifact_path(job_id, "output")
-    size_bytes = output.stat().st_size if output.exists() else int(job_record.get("output_size_bytes") or 0)
+    size_bytes = (
+        output.stat().st_size if output.exists() else int(job_record.get("output_size_bytes") or 0)
+    )
     title = str(input_payload.get("episode_title") or "Edited episode")
     user = optional_current_user(request, settings)
     token = personal_feed_token(user["id"], settings) if user else payload.token
     store.add_private_feed_item(token, job_id, title, size_bytes, user["id"] if user else None)
     return JSONResponse({"ok": True, "feed_url": f"/private-feed/{token}.xml"})
+
+
+@app.post("/jobs/{job_id}/private-feed/email")
+def email_private_feed(job_id: str, request: Request) -> JSONResponse:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="job not found") from None
+    user = current_user(request, settings)
+    email = str(user.get("email") or "")
+    if not email:
+        raise HTTPException(status_code=422, detail="Your account does not have an email address")
+    status = store.get_status(job_id)
+    if status.status != JobStatus.done:
+        raise HTTPException(status_code=409, detail="edited episode is not ready")
+
+    token = personal_feed_token(user["id"], settings)
+    input_payload = store.read_json(job_id, "input") or {}
+    job_record = store.get_job_record(job_id) or {}
+    output = store.artifact_path(job_id, "output")
+    size_bytes = (
+        output.stat().st_size if output.exists() else int(job_record.get("output_size_bytes") or 0)
+    )
+    title = str(input_payload.get("episode_title") or "Edited episode")
+    store.add_private_feed_item(token, job_id, title, size_bytes, user["id"])
+    feed_url = f"{str(request.base_url).rstrip('/')}/private-feed/{token}.xml"
+    try:
+        send_private_feed_email(email, feed_url, settings)
+    except (RuntimeError, httpx.HTTPError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "email": mask_email(email)})
 
 
 @app.get("/me")
@@ -361,21 +416,21 @@ def private_feed(token: str, request: Request) -> Response:
         item_xml.append(
             "<item>"
             f"<title>{escape(str(item.get('title') or 'Edited episode'))}</title>"
-            f"<guid isPermaLink=\"false\">{escape(job_id)}</guid>"
+            f'<guid isPermaLink="false">{escape(job_id)}</guid>'
             f"<pubDate>{format_datetime(published)}</pubDate>"
-            f"<enclosure url=\"{escape(enclosure_url)}\" "
-            f"length=\"{int(item.get('size_bytes') or 0)}\" type=\"audio/mpeg\"/>"
+            f'<enclosure url="{escape(enclosure_url)}" '
+            f'length="{int(item.get("size_bytes") or 0)}" type="audio/mpeg"/>'
             "</item>"
         )
     now = format_datetime(datetime.now(timezone.utc))
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<rss version="2.0"><channel>'
-        '<title>My Edited Episodes</title>'
-        '<description>Private edited podcast episodes from Get To The Point.</description>'
-        f'<link>{escape(feed_url)}</link><lastBuildDate>{now}</lastBuildDate>'
+        "<title>My Edited Episodes</title>"
+        "<description>Private edited podcast episodes from Get To The Point.</description>"
+        f"<link>{escape(feed_url)}</link><lastBuildDate>{now}</lastBuildDate>"
         f"{''.join(item_xml)}"
-        '</channel></rss>'
+        "</channel></rss>"
     )
     return Response(
         xml,
@@ -413,9 +468,7 @@ def job_output(job_id: str) -> FileResponse:
 
 
 def validate_private_feed_token(token: str) -> str:
-    if not 32 <= len(token) <= 256 or not all(
-        char.isalnum() or char in "_-" for char in token
-    ):
+    if not 32 <= len(token) <= 256 or not all(char.isalnum() or char in "_-" for char in token):
         raise HTTPException(status_code=404, detail="private feed not found")
     return token
 

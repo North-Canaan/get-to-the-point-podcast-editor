@@ -714,6 +714,26 @@ main section {
   gap: 10px;
 }
 
+.podcast-app-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.podcast-app-grid .button {
+  justify-content: center;
+}
+
+.email-feed {
+  justify-self: start;
+}
+
+.feed-help {
+  min-height: 1.4em;
+  color: var(--accent);
+  font-weight: 650;
+}
+
 .feed-copy-row {
   display: flex;
   gap: 10px;
@@ -934,6 +954,15 @@ audio {
   .review-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .podcast-app-grid,
+  .feed-copy-row {
+    grid-template-columns: 1fr;
+  }
+
+  .feed-copy-row {
+    display: grid;
   }
 
   .row-actions {

@@ -76,12 +76,20 @@
         <h2 id="listening-title">Listen to your edited episode</h2>
         <audio id="edited-episode" controls preload="metadata"></audio>
         <div class="private-feed">
-          <h3>Your personalized podcast feed</h3>
-          <p>Add this private RSS feed to Apple Podcasts, Overcast, Pocket Casts, or another app that supports adding a show by URL.</p>
+          <h3>Listen in your podcast app</h3>
+          <p>Add your personal feed once. Future edited episodes will appear automatically.</p>
+          <div class="podcast-app-grid" aria-label="Choose a podcast app">
+            <button class="button secondary podcast-app" data-podcast-app="apple" type="button">Apple Podcasts</button>
+            <button class="button secondary podcast-app" data-podcast-app="pocket-casts" type="button">Pocket Casts</button>
+            <button class="button secondary podcast-app" data-podcast-app="overcast" type="button">Overcast</button>
+            <button class="button secondary podcast-app" data-podcast-app="antennapod" type="button">AntennaPod</button>
+          </div>
           <div class="feed-copy-row">
             <input id="private-feed-url" type="text" readonly aria-label="Private RSS feed URL" />
             <button class="button secondary" id="copy-feed-url" type="button">Copy private feed URL</button>
           </div>
+          <button class="button secondary email-feed" id="email-feed" hidden type="button">Email me this link</button>
+          <p class="feed-help" id="feed-help" aria-live="polite"></p>
           <p class="feed-privacy">Keep this link private. Anyone with it can play your edited episodes from this browser’s feed.</p>
         </div>
       </section>
@@ -106,6 +114,9 @@
         progressTimer: null,
         progressKey: "",
         progressStartedAt: 0,
+        pipelineStartedAt: 0,
+        pollRequestStartedAt: 0,
+        lastCheckedAt: 0,
         stopTimer: null,
         pollTimer: null
       };
@@ -132,6 +143,8 @@
       const editedEpisode = document.querySelector("#edited-episode");
       const privateFeedUrl = document.querySelector("#private-feed-url");
       const copyFeedUrl = document.querySelector("#copy-feed-url");
+      const emailFeed = document.querySelector("#email-feed");
+      const feedHelp = document.querySelector("#feed-help");
       const produceLog = document.querySelector("#produce-log");
       const PADDING_SECONDS = 0.3;
       const FADE_SECONDS = 0.02;
@@ -178,10 +191,16 @@
       });
 
       copyFeedUrl.addEventListener("click", async () => {
-        await navigator.clipboard.writeText(privateFeedUrl.value);
+        await copyPrivateFeed();
         copyFeedUrl.textContent = "Copied";
         window.setTimeout(() => { copyFeedUrl.textContent = "Copy private feed URL"; }, 1800);
       });
+
+      document.querySelectorAll("[data-podcast-app]").forEach((button) => {
+        button.addEventListener("click", () => openPodcastApp(button.dataset.podcastApp));
+      });
+
+      emailFeed.addEventListener("click", emailPrivateFeed);
 
       updateHighlights.addEventListener("click", async () => {
         const selectedTopic = document.querySelector('input[name="highlight-topic"]:checked')?.value || "";
@@ -266,6 +285,7 @@
       async function loadJob(jobId) {
         const isNewJob = state.jobId !== jobId;
         state.jobId = jobId;
+        if (isNewJob) state.pipelineStartedAt = storedJobStart(jobId);
         state.highlights = [];
         state.decisions.clear();
         state.producing = false;
@@ -276,11 +296,23 @@
         if (isNewJob || !state.progressKey.startsWith("pipeline:")) {
           startElapsedStatus(
             "Loading your episode…",
-            (elapsed) => `Checking its processing status · ${elapsed} elapsed`,
-            `loading:${jobId}`
+            (elapsed) => `Checking its processing status now · ${elapsed} total elapsed`,
+            `loading:${jobId}`,
+            state.pipelineStartedAt || Date.now()
           );
         }
-        const response = await fetch(`/jobs/${jobId}/state`);
+        state.pollRequestStartedAt = Date.now();
+        let response;
+        try {
+          response = await fetch(`/jobs/${jobId}/state`);
+        } catch (error) {
+          state.pollRequestStartedAt = 0;
+          setStatus("Could not check this job.", "A network error occurred. Retrying automatically…", "error");
+          state.pollTimer = window.setTimeout(() => loadJob(jobId), 10000);
+          return;
+        }
+        state.pollRequestStartedAt = 0;
+        state.lastCheckedAt = Date.now();
         if (!response.ok) {
           if (response.status === 404) {
             setStatus("Job not found.", "Return to the podcast library and choose the episode again.", "error");
@@ -291,6 +323,8 @@
           return;
         }
         const payload = await response.json();
+        applyServerTiming(payload);
+        emailFeed.hidden = !payload.email_delivery_available;
         if (payload.episode_title) episodeTitle.textContent = payload.episode_title;
         renderJobStatus(payload);
         if (["queued", "transcribing", "detecting_highlights"].includes(payload.status)) {
@@ -359,12 +393,12 @@
         };
         const message = messages[payload.status] || ["Processing episode…", "This page will update automatically."];
         const activeDetails = {
-          queued: (elapsed) => `Submitting the source audio for transcription · ${elapsed} elapsed`,
-          transcribing: (elapsed) => `Creating the transcript, then preparing its highlights. Status is checked every 10 seconds · ${elapsed} elapsed`,
-          detecting_highlights: (elapsed) => `The transcript is ready. AI is finding topics and strong moments · ${elapsed} elapsed`
+          queued: (elapsed) => `Submitting the source audio for transcription · ${elapsed} total elapsed · ${pollFreshness()}`,
+          transcribing: (elapsed) => `Creating the transcript, then preparing its highlights · ${elapsed} total elapsed · ${pollFreshness()}`,
+          detecting_highlights: (elapsed) => `The transcript is ready. AI is finding topics and strong moments · ${elapsed} total elapsed · ${pollFreshness()}`
         };
         if (activeDetails[payload.status]) {
-          startElapsedStatus(message[0], activeDetails[payload.status], `pipeline:${payload.status}`);
+          startElapsedStatus(message[0], activeDetails[payload.status], `pipeline:${payload.status}`, state.pipelineStartedAt);
         } else {
           setStatus(message[0], message[1], payload.status === "error" ? "error" : "");
         }
@@ -463,6 +497,9 @@
         listeningCard.hidden = false;
         privateFeedUrl.value = "Preparing your private feed…";
         copyFeedUrl.disabled = true;
+        emailFeed.disabled = true;
+        document.querySelectorAll("[data-podcast-app]").forEach((button) => { button.disabled = true; });
+        feedHelp.textContent = "";
         syncActions();
         try {
           const token = getPrivateFeedToken();
@@ -475,10 +512,64 @@
           if (!response.ok) throw new Error(payload.detail || "Private feed could not be created");
           privateFeedUrl.value = new URL(payload.feed_url, location.origin).href;
           copyFeedUrl.disabled = false;
+          emailFeed.disabled = false;
+          document.querySelectorAll("[data-podcast-app]").forEach((button) => { button.disabled = false; });
         } catch (error) {
           console.error(error);
           privateFeedUrl.value = "Private feed unavailable. Please reload and try again.";
           copyFeedUrl.disabled = true;
+          emailFeed.disabled = true;
+        }
+      }
+
+      async function copyPrivateFeed() {
+        await navigator.clipboard.writeText(privateFeedUrl.value);
+      }
+
+      async function openPodcastApp(app) {
+        await copyPrivateFeed();
+        const feedUrl = privateFeedUrl.value;
+        const title = "My Edited Episodes";
+        const instructions = {
+          apple: "Feed copied. In Apple Podcasts: Library → More → Follow a Show by URL → Paste.",
+          "pocket-casts": "Feed copied. In Pocket Casts, paste it into Search or Discover. Private feeds can take a moment to appear.",
+          overcast: "Feed copied. In Overcast: + → Add URL → Paste.",
+          antennapod: "Feed copied. AntennaPod should open a subscription preview."
+        };
+        feedHelp.textContent = instructions[app];
+        if (app === "antennapod") {
+          location.href = `https://antennapod.org/deeplink/subscribe?url=${encodeURIComponent(feedUrl)}&title=${encodeURIComponent(title)}`;
+        } else if (app === "apple") {
+          location.href = feedUrl.replace(/^https?:\/\//, "podcast://");
+        } else if (app === "overcast") {
+          location.href = "overcast://";
+        } else {
+          window.open("https://pocketcasts.com/", "_blank", "noopener,noreferrer");
+        }
+      }
+
+      async function emailPrivateFeed() {
+        emailFeed.disabled = true;
+        emailFeed.textContent = "Sending…";
+        feedHelp.textContent = "";
+        try {
+          const response = await fetch(`/jobs/${state.jobId}/private-feed/email`, { method: "POST" });
+          const payload = await response.json();
+          if (response.status === 401) {
+            const subject = encodeURIComponent("My personal Get To The Point podcast feed");
+            const body = encodeURIComponent(`Add this private feed to my podcast app:\n\n${privateFeedUrl.value}\n\nKeep this link private.`);
+            location.href = `mailto:?subject=${subject}&body=${body}`;
+            feedHelp.textContent = "Sign in for one-click delivery. Your email app has been opened instead.";
+            return;
+          }
+          if (!response.ok) throw new Error(payload.detail || "The email could not be sent");
+          feedHelp.textContent = `Sent to ${payload.email}.`;
+          emailFeed.textContent = "Email sent";
+        } catch (error) {
+          feedHelp.textContent = `${error.message}. You can still copy the private feed link.`;
+        } finally {
+          emailFeed.disabled = false;
+          if (emailFeed.textContent !== "Email sent") emailFeed.textContent = "Email me this link";
         }
       }
 
@@ -560,10 +651,12 @@
         );
       }
 
-      function startElapsedStatus(title, detailBuilder, key) {
+      function startElapsedStatus(title, detailBuilder, key, startedAt = 0) {
         if (state.progressKey !== key) {
           state.progressKey = key;
-          state.progressStartedAt = Date.now();
+          state.progressStartedAt = startedAt || Date.now();
+        } else if (startedAt && startedAt < state.progressStartedAt) {
+          state.progressStartedAt = startedAt;
         }
         if (state.progressTimer) window.clearInterval(state.progressTimer);
         const update = () => {
@@ -585,6 +678,29 @@
         const minutes = Math.floor(totalSeconds / 60);
         const seconds = String(totalSeconds % 60).padStart(2, "0");
         return `${minutes}:${seconds}`;
+      }
+
+      function storedJobStart(jobId) {
+        const stored = Number(localStorage.getItem(`podcast-job-start:${jobId}`));
+        return Number.isFinite(stored) && stored > 0 ? stored : Date.now();
+      }
+
+      function applyServerTiming(payload) {
+        const serverStart = Date.parse(payload.created_at || "");
+        if (Number.isFinite(serverStart)) {
+          state.pipelineStartedAt = serverStart;
+          localStorage.setItem(`podcast-job-start:${payload.job_id}`, String(serverStart));
+        }
+      }
+
+      function pollFreshness() {
+        if (state.pollRequestStartedAt) {
+          const seconds = Math.max(0, Math.floor((Date.now() - state.pollRequestStartedAt) / 1000));
+          return seconds < 2 ? "checking now" : `status check in progress (${formatElapsed(seconds)})`;
+        }
+        if (!state.lastCheckedAt) return "waiting for the first status check";
+        const seconds = Math.max(0, Math.floor((Date.now() - state.lastCheckedAt) / 1000));
+        return seconds < 2 ? "checked just now" : `last checked ${seconds} seconds ago`;
       }
 
       function formatTime(seconds) {

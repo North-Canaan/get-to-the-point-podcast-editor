@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     supabase_bucket: str = "podcast-artifacts"
     better_auth_url: str | None = None
     better_auth_secret: str | None = None
+    resend_api_key: str | None = None
+    feed_email_from: str = "Get To The Point <feeds@example.com>"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

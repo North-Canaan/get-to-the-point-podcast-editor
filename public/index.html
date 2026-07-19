@@ -265,6 +265,7 @@
           });
           const data = await response.json();
           if (!response.ok) throw new Error(data.detail || "Could not start the job");
+          localStorage.setItem(`podcast-job-start:${data.job_id}`, String(startedAt));
           window.location.href = `/jobs/${data.job_id}/review`;
         } catch (error) {
           status.textContent = error.message;

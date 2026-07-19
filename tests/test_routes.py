@@ -21,6 +21,7 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
     route_paths = {route.path for route in app.routes}
     assert "/jobs/{job_id}/output-upload-url" in route_paths
     assert "/jobs/{job_id}/output-complete" in route_paths
+    assert "/jobs/{job_id}/private-feed/email" in route_paths
 
 
 def test_anonymous_user_can_start_episode_when_auth_is_configured(
@@ -52,6 +53,28 @@ def test_anonymous_user_can_start_episode_when_auth_is_configured(
     job = test_store.get_job_record(response.json()["job_id"])
     assert job is None
     assert test_store.get_status(response.json()["job_id"]).status == JobStatus.queued
+
+
+def test_job_state_includes_server_timing_when_available(monkeypatch, tmp_path: Path) -> None:
+    test_store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    job_id = new_job_id()
+    test_store.write_json(job_id, "input", {"episode_title": "Timed episode"})
+    test_store.set_status(job_id, JobStatus.needs_review)
+    monkeypatch.setattr(main_module, "store", test_store)
+    monkeypatch.setattr(
+        test_store,
+        "get_job_record",
+        lambda _job_id: {
+            "created_at": "2026-07-18T10:00:00+00:00",
+            "updated_at": "2026-07-18T10:05:00+00:00",
+        },
+    )
+
+    payload = TestClient(app).get(f"/jobs/{job_id}/state").json()
+
+    assert payload["created_at"] == "2026-07-18T10:00:00+00:00"
+    assert payload["status_updated_at"] == "2026-07-18T10:05:00+00:00"
+    assert payload["email_delivery_available"] is False
 
 
 def test_private_feed_serves_only_attached_edited_episode(monkeypatch, tmp_path: Path) -> None:
@@ -90,3 +113,39 @@ def test_private_feed_serves_only_attached_edited_episode(monkeypatch, tmp_path:
     assert episode.content == b"edited-audio"
     denied = client.get(f"/private-feed/{'x' * 43}/episodes/{job_id}.mp3")
     assert denied.status_code == 404
+
+
+def test_signed_in_user_can_email_personal_feed(monkeypatch, tmp_path: Path) -> None:
+    test_settings = Settings(
+        data_dir=tmp_path,
+        state_backend="filesystem",
+        better_auth_url="https://auth.example.test",
+        better_auth_secret="test-secret",
+        resend_api_key="test-resend-key",
+    )
+    test_store = JobStore(test_settings)
+    job_id = new_job_id()
+    test_store.write_json(job_id, "input", {"episode_title": "A useful conversation"})
+    test_store.artifact_path(job_id, "output").write_bytes(b"edited-audio")
+    test_store.set_status(job_id, JobStatus.done)
+    sent = []
+    monkeypatch.setattr(main_module, "settings", test_settings)
+    monkeypatch.setattr(main_module, "store", test_store)
+    monkeypatch.setattr(
+        main_module,
+        "current_user",
+        lambda *_args: {"id": "user-1", "email": "listener@example.com"},
+    )
+    monkeypatch.setattr(
+        main_module,
+        "send_private_feed_email",
+        lambda email, feed_url, _settings: sent.append((email, feed_url)),
+    )
+
+    response = TestClient(app).post(f"/jobs/{job_id}/private-feed/email")
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "l•••••••@example.com"
+    assert sent[0][0] == "listener@example.com"
+    assert sent[0][1].startswith("http://testserver/private-feed/")
+    assert test_store.list_private_feed_items(sent[0][1].split("/")[-1][:-4])

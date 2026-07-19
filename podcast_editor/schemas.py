@@ -111,6 +111,9 @@ class StateResponse(BaseModel):
     job_id: str
     status: JobStatus
     error: str | None = None
+    created_at: str | None = None
+    status_updated_at: str | None = None
+    email_delivery_available: bool = False
     episode_title: str | None = None
     transcript: Transcript | None = None
     highlights: Highlights | None = None
