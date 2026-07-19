@@ -101,7 +101,6 @@
     <script src="/assets/auth.js" defer></script>
     <script type="module">
       import { FFmpeg } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
-      import { toBlobURL } from "https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js";
 
       const state = {
         jobId: "",
@@ -266,7 +265,11 @@
             syncActions();
             return;
           }
-          setWorkingStatus("Preparing the audio editor…", "Loading the tools needed to create your episode.", 5);
+          startElapsedStatus(
+            "Preparing the audio editor…",
+            (elapsed) => `Loading the tools needed to create your episode · ${elapsed} elapsed`,
+            `editor:${state.jobId}`
+          );
           const blob = await spliceInBrowser(`/jobs/${state.jobId}/audio`, approved);
           setWorkingStatus("Saving your edited episode…", "Uploading the finished audio securely.", 96);
           await uploadOutput(blob);
@@ -276,7 +279,10 @@
         } catch (error) {
           console.error(error);
           appendProduceLog(`ERROR: ${error && error.stack ? error.stack : error}`);
-          setStatus("Edited episode creation failed.", "Open Technical details for more information.", "error");
+          const detail = error?.name === "TimeoutError"
+            ? "The audio editor took too long to load. Check your connection, then choose Create edited episode to retry."
+            : "Open Technical details for more information, then choose Create edited episode to retry.";
+          setStatus("Edited episode creation failed.", detail, "error");
         } finally {
           state.producing = false;
           syncActions();
@@ -750,18 +756,32 @@
           );
         });
 
-        const classWorkerURL = await moduleWorkerBlobURL(
-          "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js"
+        setWorkingStatus("Preparing the audio editor…", "Loading the editor worker (1 of 3).", 3);
+        const classWorkerURL = await withTimeout(
+          moduleWorkerBlobURL("https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js"),
+          45_000,
+          "Editor worker download timed out"
         );
-        const coreURL = await toBlobURL(
+        const coreURL = await assetBlobURL(
           "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
-          "text/javascript"
+          "text/javascript",
+          "Loading the editor engine (2 of 3).",
+          4,
+          2
         );
-        const wasmURL = await toBlobURL(
+        const wasmURL = await assetBlobURL(
           "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
-          "application/wasm"
+          "application/wasm",
+          "Loading the editor engine (3 of 3).",
+          6,
+          3
         );
-        await ffmpeg.load({ classWorkerURL, coreURL, wasmURL });
+        setWorkingStatus("Starting the audio editor…", "Initializing the downloaded tools.", 9);
+        await withTimeout(
+          ffmpeg.load({ classWorkerURL, coreURL, wasmURL }),
+          45_000,
+          "Audio editor initialization timed out"
+        );
 
         appendProduceLog("Downloading source audio...");
         setWorkingStatus("Downloading the source episode…", "This is usually the longest download step.", 10);
@@ -856,6 +876,31 @@
           offset += chunk.byteLength;
         }
         return output;
+      }
+
+      async function assetBlobURL(url, mimeType, label, progressBase, progressSpan) {
+        const bytes = await withTimeout(
+          fetchWithProgress(url, (loaded, total) => {
+            const size = total ? `${formatBytes(loaded)} / ${formatBytes(total)}` : formatBytes(loaded);
+            const percent = total ? progressBase + (loaded / total) * progressSpan : progressBase;
+            setWorkingStatus("Preparing the audio editor…", `${label} ${size}`, percent);
+          }),
+          90_000,
+          `${label} timed out`
+        );
+        return URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+      }
+
+      function withTimeout(promise, milliseconds, message) {
+        let timeoutId;
+        const timeout = new Promise((_, reject) => {
+          timeoutId = window.setTimeout(() => {
+            const error = new Error(message);
+            error.name = "TimeoutError";
+            reject(error);
+          }, milliseconds);
+        });
+        return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
       }
 
       function uploadWithProgress(url, body) {
