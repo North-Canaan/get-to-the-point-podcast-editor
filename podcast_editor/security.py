@@ -105,9 +105,14 @@ def public_http_request(
                     content.extend(chunk)
                     if len(content) > max_bytes:
                         raise HTTPException(status_code=422, detail="Remote response is too large")
+                headers = httpx.Headers(response.headers)
+                # iter_bytes() returns decoded content. Keeping the upstream encoding
+                # metadata would make the reconstructed response decode it a second time.
+                headers.pop("content-encoding", None)
+                headers.pop("content-length", None)
                 return httpx.Response(
                     response.status_code,
-                    headers=response.headers,
+                    headers=headers,
                     content=bytes(content),
                     request=response.request,
                 )
