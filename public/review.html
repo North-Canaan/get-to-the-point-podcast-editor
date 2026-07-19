@@ -1032,6 +1032,7 @@
         return new Promise((resolve, reject) => {
           const request = new XMLHttpRequest();
           request.open("PUT", url);
+          request.setRequestHeader("x-upsert", "true");
           request.upload.addEventListener("progress", (event) => {
             const label = event.lengthComputable
               ? `${formatBytes(event.loaded)} / ${formatBytes(event.total)}`
@@ -1041,7 +1042,10 @@
           });
           request.addEventListener("load", () => {
             if (request.status >= 200 && request.status < 300) resolve();
-            else reject(new Error(`Audio storage upload failed: ${request.status}`));
+            else {
+              const detail = request.responseText ? ` · ${request.responseText.slice(0, 300)}` : "";
+              reject(new Error(`Audio storage upload failed: ${request.status}${detail}`));
+            }
           });
           request.addEventListener("error", () => reject(new Error("Audio storage upload failed")));
           request.send(body);
