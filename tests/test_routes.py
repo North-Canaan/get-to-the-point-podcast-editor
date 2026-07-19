@@ -29,6 +29,10 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
         if header["key"] == "Content-Security-Policy"
     )
     assert vercel_csp == main_module.SECURITY_HEADERS["Content-Security-Policy"]
+    review_html = Path("public/review.html").read_text(encoding="utf-8")
+    assert "selection-size-warning" in review_html
+    assert "estimatedBytes > SAFE_OUTPUT_BYTES" in review_html
+    assert "blob.size > HARD_OUTPUT_BYTES" in review_html
 
 
 def test_anonymous_user_can_start_episode_when_auth_is_configured(

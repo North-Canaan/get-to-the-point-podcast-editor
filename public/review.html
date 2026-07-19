@@ -72,6 +72,7 @@
       <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates" hidden></section>
       <div class="actions" id="produce-actions" hidden>
         <span class="selection-count" id="selection-count" aria-live="polite"></span>
+        <span class="selection-size-warning" id="selection-size-warning" role="alert" hidden></span>
         <button class="button" id="produce" hidden type="button">Create edited episode</button>
         <a class="button secondary" id="output-link" hidden>Download edited episode</a>
         <button class="button secondary" id="new-edit" hidden type="button">Create new edited episode</button>
@@ -124,6 +125,7 @@
         lastCheckedAt: 0,
         advancePromise: null,
         advanceJobId: "",
+        audioMetadata: null,
         stopTimer: null,
         pollTimer: null
       };
@@ -143,6 +145,7 @@
       const updateHighlights = document.querySelector("#update-highlights");
       const produceActions = document.querySelector("#produce-actions");
       const selectionCount = document.querySelector("#selection-count");
+      const selectionSizeWarning = document.querySelector("#selection-size-warning");
       const list = document.querySelector("#highlight-list");
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
@@ -158,6 +161,10 @@
       const produceLog = document.querySelector("#produce-log");
       const PADDING_SECONDS = 0.3;
       const FADE_SECONDS = 0.02;
+      const STANDARD_OUTPUT_KBPS = 128;
+      const SAFE_OUTPUT_BYTES = 43_000_000;
+      const HARD_OUTPUT_BYTES = 47_000_000;
+      const LARGE_SOURCE_BYTES = 60 * 1024 * 1024;
 
       podcastFeedAction.addEventListener("click", () => {
         listeningCard.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -573,13 +580,25 @@
         const outputReady = !outputLink.hidden;
         selectAllHighlights.disabled = !hasHighlights;
         unselectAllHighlights.disabled = !hasHighlights;
+        const approved = hasApproval ? approvedSegments() : [];
+        const selectedSeconds = selectedOutputSeconds(approved, state.audioMetadata?.duration);
+        const estimatedBytes = estimateMp3Bytes(selectedSeconds, STANDARD_OUTPUT_KBPS);
+        const minimumEstimatedBytes = estimateMp3Bytes(selectedSeconds, 32);
+        const cannotFit = minimumEstimatedBytes > SAFE_OUTPUT_BYTES;
         selectionCount.textContent = hasApproval
-          ? `${selectedTotal} ${selectedTotal === 1 ? "highlight" : "highlights"} selected`
+          ? `${selectedTotal} ${selectedTotal === 1 ? "highlight" : "highlights"} selected · ${formatDuration(selectedSeconds)} · about ${formatBytes(estimatedBytes)}`
           : "Select at least one highlight to continue";
+        selectionSizeWarning.hidden = !hasApproval || estimatedBytes <= SAFE_OUTPUT_BYTES;
+        selectionSizeWarning.classList.toggle("blocking", cannotFit);
+        selectionSizeWarning.textContent = selectionSizeWarning.hidden
+          ? ""
+          : cannotFit
+            ? "This selection is too long to save even at the lowest supported quality. Unselect some highlights before creating the episode."
+            : "Large edit selected. It will be compressed before creation so it can be saved and downloaded.";
         produce.hidden = !hasApproval || outputReady;
         podcastFeedAction.hidden = !outputReady;
-        produce.disabled = state.producing;
-        newEdit.disabled = state.producing || !hasApproval;
+        produce.disabled = state.producing || cannotFit;
+        newEdit.disabled = state.producing || !hasApproval || cannotFit;
         produceActions.hidden = !hasHighlights && outputLink.hidden;
       }
 
@@ -698,6 +717,9 @@
       }
 
       async function uploadOutput(blob) {
+        if (blob.size > HARD_OUTPUT_BYTES) {
+          throw new Error(`Edited audio is too large (${formatBytes(blob.size)}). Select fewer highlights.`);
+        }
         const signingResponse = await fetchWithRetries(
           `/jobs/${state.jobId}/output-upload-url`,
           { method: "POST" }
@@ -854,8 +876,17 @@
         const metadataResponse = await fetch(`/jobs/${state.jobId}/audio-metadata`);
         if (!metadataResponse.ok) throw new Error("Could not inspect the source audio");
         const metadata = await metadataResponse.json();
-        if (metadata.size_bytes > 100 * 1024 * 1024) {
-          appendProduceLog(`Large source detected (${formatBytes(metadata.size_bytes)}); using memory-safe ranged editing.`);
+        state.audioMetadata = metadata;
+        syncActions();
+        const estimatedBytes = estimateMp3Bytes(
+          selectedOutputSeconds(orderedSegments, metadata.duration),
+          STANDARD_OUTPUT_KBPS
+        );
+        if (metadata.size_bytes > LARGE_SOURCE_BYTES || estimatedBytes > SAFE_OUTPUT_BYTES) {
+          const reason = metadata.size_bytes > LARGE_SOURCE_BYTES
+            ? `Large source detected (${formatBytes(metadata.size_bytes)})`
+            : `Large edit detected (about ${formatBytes(estimatedBytes)} at standard quality)`;
+          appendProduceLog(`${reason}; using memory-safe compressed editing.`);
           return spliceLargeEpisodeRanges(orderedSegments, metadata);
         }
 
@@ -943,7 +974,11 @@
           "output.mp3"
         ]);
         const data = await ffmpeg.readFile("output.mp3");
-        return new Blob([data.buffer], { type: "audio/mpeg" });
+        const blob = new Blob([data.buffer], { type: "audio/mpeg" });
+        if (blob.size > HARD_OUTPUT_BYTES) {
+          throw new Error(`Edited audio is too large (${formatBytes(blob.size)}). Select fewer highlights.`);
+        }
+        return blob;
       }
 
       async function spliceLargeEpisodeRanges(orderedSegments, metadata) {
@@ -968,10 +1003,7 @@
         );
         stopElapsedProgress();
 
-        const selectedSeconds = orderedSegments.reduce(
-          (total, segment) => total + Math.max(0, Number(segment.end) - Number(segment.start)),
-          0
-        );
+        const selectedSeconds = selectedOutputSeconds(orderedSegments, metadata.duration);
         const maximumKbps = Math.floor((43_000_000 * 8) / Math.max(1, selectedSeconds) / 1000);
         const bitrate = [128, 112, 96, 80, 64, 48, 32].find((value) => value <= maximumKbps) || 32;
         appendProduceLog(`Compressing ${formatDuration(selectedSeconds)} of selected audio at ${bitrate}kbps.`);
@@ -1042,10 +1074,23 @@
         if (concatExitCode !== 0) throw new Error("Could not assemble the compressed highlights");
         const output = await ffmpeg.readFile("large_output.mp3");
         const blob = new Blob([output.buffer], { type: "audio/mpeg" });
-        if (blob.size > 47_000_000) {
+        if (blob.size > HARD_OUTPUT_BYTES) {
           throw new Error(`Edited audio is still too large (${formatBytes(blob.size)}). Select fewer highlights.`);
         }
         return blob;
+      }
+
+      function selectedOutputSeconds(segments, sourceDuration = Infinity) {
+        return segments.reduce((total, segment) => {
+          const start = Math.max(0, Number(segment.start) - PADDING_SECONDS);
+          const end = Math.min(sourceDuration, Number(segment.end) + PADDING_SECONDS);
+          return total + Math.max(0, end - start);
+        }, 0);
+      }
+
+      function estimateMp3Bytes(seconds, bitrateKbps) {
+        if (!(seconds > 0)) return 0;
+        return Math.ceil((seconds * bitrateKbps * 1000) / 8 * 1.02 + 64 * 1024);
       }
 
       async function fetchSameOriginAudioRange(
