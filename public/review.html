@@ -259,35 +259,7 @@
           state.producing = true;
           syncActions();
           produceLog.textContent = "";
-          const approved = state.allHighlights
-            .filter((item) => state.decisions.get(item.id)?.decision === "approve")
-            .map((item) => {
-              const decision = state.decisions.get(item.id);
-              return { start: Number(decision.start), end: Number(decision.end) };
-            });
-          setWorkingStatus("Starting your edited episode…", "Saving your highlight choices.", 2);
-          const response = await fetch(`/jobs/${state.jobId}/review`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ordered_segments: approved })
-          });
-          if (!response.ok) {
-            setStatus("Could not submit review.");
-            state.producing = false;
-            syncActions();
-            return;
-          }
-          startElapsedStatus(
-            "Preparing the audio editor…",
-            (elapsed) => `Loading the tools needed to create your episode · ${elapsed} elapsed`,
-            `editor:${state.jobId}`
-          );
-          const blob = await spliceInBrowser(`/jobs/${state.jobId}/audio`, approved);
-          setWorkingStatus("Saving your edited episode…", "Uploading the finished audio securely.", 96);
-          await uploadOutput(blob);
-          await revealOutput();
-          setStatus("Your edited episode is ready to download.");
-          processingState.classList.add("ready");
+          await renderApprovedEdit(approvedSegments());
         } catch (error) {
           console.error(error);
           appendProduceLog(`ERROR: ${error && error.stack ? error.stack : error}`);
@@ -300,6 +272,36 @@
           syncActions();
         }
       });
+
+      function approvedSegments() {
+        return state.allHighlights
+          .filter((item) => state.decisions.get(item.id)?.decision === "approve")
+          .map((item) => {
+            const decision = state.decisions.get(item.id);
+            return { start: Number(decision.start), end: Number(decision.end) };
+          });
+      }
+
+      async function renderApprovedEdit(approved) {
+        setWorkingStatus("Starting your edited episode…", "Saving your highlight choices.", 2);
+        const response = await fetch(`/jobs/${state.jobId}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ordered_segments: approved })
+        });
+        if (!response.ok) throw new Error("Could not submit review");
+        startElapsedStatus(
+          "Preparing the audio editor…",
+          (elapsed) => `Loading the tools needed to create your episode · ${elapsed} elapsed`,
+          `editor:${state.jobId}`
+        );
+        const blob = await spliceInBrowser(`/jobs/${state.jobId}/audio`, approved);
+        setWorkingStatus("Saving your edited episode…", "Uploading the finished audio securely.", 96);
+        await uploadOutput(blob);
+        await revealOutput();
+        setStatus("Your edited episode is ready to download.");
+        processingState.classList.add("ready");
+      }
 
       async function loadJob(jobId) {
         const isNewJob = state.jobId !== jobId;
@@ -534,6 +536,7 @@
         produce.hidden = !hasApproval || outputReady;
         podcastFeedAction.hidden = !outputReady;
         produce.disabled = state.producing;
+        newEdit.disabled = state.producing || !hasApproval;
         produceActions.hidden = !hasHighlights && outputLink.hidden;
       }
 
@@ -577,17 +580,30 @@
       }
 
       async function createAdditionalEdit() {
-        newEdit.disabled = true;
+        const approved = approvedSegments();
+        if (!approved.length) return;
+        state.producing = true;
+        syncActions();
         newEdit.textContent = "Creating…";
+        produceLog.textContent = "";
         try {
           const response = await fetch(`/jobs/${state.jobId}/edits`, { method: "POST" });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.detail || "Could not create another edit");
-          location.href = `/jobs/${payload.job_id}/review`;
+          state.jobId = payload.job_id;
+          history.replaceState(null, "", `/jobs/${payload.job_id}/review`);
+          outputLink.hidden = true;
+          newEdit.hidden = true;
+          listeningCard.hidden = true;
+          await renderApprovedEdit(approved);
         } catch (error) {
-          setStatus("Could not create another edit.", error.message || "Please try again.", "error");
-          newEdit.disabled = false;
+          console.error(error);
+          appendProduceLog(`ERROR: ${error && error.stack ? error.stack : error}`);
+          setStatus("Could not create another edited episode.", error.message || "Please try again.", "error");
+        } finally {
+          state.producing = false;
           newEdit.textContent = "Create new edited episode";
+          syncActions();
         }
       }
 
