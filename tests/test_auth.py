@@ -77,6 +77,24 @@ def test_optional_current_user_allows_missing_session(tmp_path, monkeypatch) -> 
     assert response.json() == {"user": None}
 
 
+def test_optional_current_user_does_not_silently_ignore_auth_outage(
+    tmp_path, monkeypatch
+) -> None:
+    settings = Settings(data_dir=tmp_path, better_auth_url="https://example.test")
+    app = FastAPI()
+
+    @app.get("/optional")
+    def optional(request: Request):
+        return {"user": optional_current_user(request, settings)}
+
+    FakeClient.response = Response(500, json={"error": "database unavailable"})
+    monkeypatch.setattr("podcast_editor.auth.httpx.Client", FakeClient)
+
+    response = TestClient(app).get("/optional")
+
+    assert response.status_code == 503
+
+
 def test_personal_feed_token_is_stable_and_user_specific(tmp_path) -> None:
     settings = Settings(data_dir=tmp_path, better_auth_secret="secret-value-that-is-long-enough")
     assert personal_feed_token("user-1", settings) == personal_feed_token("user-1", settings)

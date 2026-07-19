@@ -35,6 +35,28 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
     assert "blob.size > HARD_OUTPUT_BYTES" in review_html
 
 
+def test_canonical_base_url_never_uses_localhost_when_production_origin_is_trusted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(
+            data_dir=tmp_path,
+            app_base_url="http://localhost:8000",
+            trusted_origins=(
+                "http://localhost:8000,"
+                "https://get-to-the-point-podcast-editor.vercel.app"
+            ),
+        ),
+    )
+
+    assert (
+        main_module.canonical_base_url()
+        == "https://get-to-the-point-podcast-editor.vercel.app"
+    )
+
+
 def test_anonymous_user_can_start_episode_when_auth_is_configured(
     monkeypatch, tmp_path: Path
 ) -> None:

@@ -39,6 +39,7 @@ from .security import (
     client_rate_key,
     enforce_same_origin,
     public_http_request,
+    trusted_origins,
     validate_public_http_url,
 )
 from .pipeline.highlights import (
@@ -116,7 +117,15 @@ def mask_email(email: str) -> str:
 
 
 def canonical_base_url() -> str:
-    return settings.app_base_url.rstrip("/")
+    configured = settings.app_base_url.rstrip("/")
+    if not configured.startswith(("http://localhost", "https://localhost")):
+        return configured
+    production_origins = sorted(
+        origin for origin in trusted_origins(settings) if origin.startswith("https://")
+    )
+    if production_origins:
+        return production_origins[0]
+    return configured
 
 
 def authorize_job_access(request: Request, job_id: str) -> dict:

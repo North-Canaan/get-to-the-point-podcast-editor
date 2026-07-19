@@ -28,6 +28,8 @@ def current_user(request: Request, settings: Settings) -> dict:
         session = response.json()
     except ValueError:
         session = None
+    if response.status_code >= 500:
+        raise HTTPException(status_code=503, detail="Sign-in service is unavailable")
     if response.status_code != 200 or not session:
         raise HTTPException(status_code=401, detail="Sign in to continue")
     user = session.get("user")
