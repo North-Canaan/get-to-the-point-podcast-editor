@@ -9,6 +9,7 @@ from ..config import Settings
 from ..jobs import JobStore
 from ..schemas import JobStatus
 from .highlights import detect_highlights
+from .ingest import MAX_RSS_RESPONSE_BYTES
 from ..security import public_http_request, validate_public_http_url
 
 ASSEMBLYAI_BASE = "https://api.assemblyai.com/v2"
@@ -126,11 +127,15 @@ def resolve_audio_url(source_url: str) -> str:
         response = public_http_request("HEAD", source_url)
         content_type = response.headers.get("content-type", "")
         if "xml" in content_type or "rss" in content_type or looks_like_feed_url(source_url):
-            text = public_http_request("GET", source_url).text
+            text = public_http_request(
+                "GET", source_url, max_bytes=MAX_RSS_RESPONSE_BYTES
+            ).text
     except (httpx.HTTPError, HTTPException):
         if looks_like_feed_url(source_url):
             try:
-                text = public_http_request("GET", source_url).text
+                text = public_http_request(
+                    "GET", source_url, max_bytes=MAX_RSS_RESPONSE_BYTES
+                ).text
             except (httpx.HTTPError, HTTPException):
                 text = ""
 

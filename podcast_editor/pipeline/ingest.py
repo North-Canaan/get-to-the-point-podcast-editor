@@ -14,6 +14,9 @@ from ..jobs import JobStore
 from .media import ffprobe_duration, transcode_to_16k_wav
 from ..security import public_http_request, validate_public_http_url
 
+MAX_RSS_RESPONSE_BYTES = 25 * 1024 * 1024
+MAX_FEED_EPISODES = 500
+
 
 class IngestError(RuntimeError):
     pass
@@ -21,7 +24,9 @@ class IngestError(RuntimeError):
 
 def list_feed_episodes(source_url: str) -> dict:
     try:
-        response = public_http_request("GET", source_url)
+        response = public_http_request(
+            "GET", source_url, max_bytes=MAX_RSS_RESPONSE_BYTES
+        )
     except (httpx.HTTPError, HTTPException) as exc:
         raise IngestError(f"could not fetch RSS feed: {exc}") from exc
 
@@ -45,6 +50,8 @@ def list_feed_episodes(source_url: str) -> dict:
                 "language": language,
             }
         )
+        if len(episodes) >= MAX_FEED_EPISODES:
+            break
 
     if not episodes:
         raise IngestError("no podcast episodes with audio enclosures were found")

@@ -13,7 +13,11 @@ def test_list_feed_episodes_returns_all_enclosures(monkeypatch) -> None:
         <enclosure url="https://cdn.example.com/one.mp3" type="audio/mpeg" /></item>
     </channel></rss>"""
 
-    def fake_get(method, url):
+    requested_max_bytes = None
+
+    def fake_get(method, url, *, max_bytes):
+        nonlocal requested_max_bytes
+        requested_max_bytes = max_bytes
         return httpx.Response(200, content=rss, request=httpx.Request("GET", url))
 
     monkeypatch.setattr("podcast_editor.pipeline.ingest.public_http_request", fake_get)
@@ -22,12 +26,13 @@ def test_list_feed_episodes_returns_all_enclosures(monkeypatch) -> None:
     assert result["title"] == "Test Show"
     assert [episode["title"] for episode in result["episodes"]] == ["Episode Two", "Episode One"]
     assert result["episodes"][0]["audio_url"] == "https://cdn.example.com/two.mp3"
+    assert requested_max_bytes == 25 * 1024 * 1024
 
 
 def test_list_feed_episodes_rejects_feed_without_audio(monkeypatch) -> None:
     rss = b'<rss version="2.0"><channel><title>Empty</title><item><title>Post</title></item></channel></rss>'
 
-    def fake_get(method, url):
+    def fake_get(method, url, *, max_bytes):
         return httpx.Response(200, content=rss, request=httpx.Request("GET", url))
 
     monkeypatch.setattr("podcast_editor.pipeline.ingest.public_http_request", fake_get)
