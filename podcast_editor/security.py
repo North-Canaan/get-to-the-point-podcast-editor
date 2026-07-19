@@ -77,13 +77,18 @@ def validate_public_http_url(value: str) -> str:
 
 
 def public_http_request(
-    method: str, url: str, *, max_bytes: int = 5_000_000, max_redirects: int = 5
+    method: str,
+    url: str,
+    *,
+    max_bytes: int = 5_000_000,
+    max_redirects: int = 5,
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     current = url
     with httpx.Client(follow_redirects=False, timeout=20.0) as client:
         for _ in range(max_redirects + 1):
             validate_public_http_url(current)
-            with client.stream(method, current) as response:
+            with client.stream(method, current, headers=headers) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:

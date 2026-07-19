@@ -38,6 +38,7 @@ from .security import (
     SECURITY_HEADERS,
     client_rate_key,
     enforce_same_origin,
+    public_http_request,
     validate_public_http_url,
 )
 from .pipeline.highlights import PROMPT_VERSION, detect_highlights
@@ -305,6 +306,32 @@ def job_audio(job_id: str, request: Request) -> Response:
             return response
         raise HTTPException(status_code=404, detail="audio not found")
     return ranged_file_response(original, request)
+
+
+@app.get("/jobs/{job_id}/audio-metadata")
+def job_audio_metadata(job_id: str, request: Request) -> JSONResponse:
+    authorize_job_access(request, job_id)
+    input_payload = store.read_json(job_id, "input") or {}
+    transcript = store.read_json(job_id, "transcript") or {}
+    audio_url = input_payload.get("resolved_audio_url")
+    if not audio_url:
+        raise HTTPException(status_code=404, detail="audio not found")
+    try:
+        response = public_http_request(
+            "GET", str(audio_url), headers={"Range": "bytes=0-0"}, max_bytes=1024
+        )
+    except (httpx.HTTPError, HTTPException) as exc:
+        raise HTTPException(status_code=502, detail="could not inspect source audio") from exc
+    content_range = response.headers.get("content-range", "")
+    match = re.search(r"/(\d+)$", content_range)
+    if not match:
+        raise HTTPException(status_code=502, detail="source audio does not support ranges")
+    return JSONResponse(
+        {
+            "size_bytes": int(match.group(1)),
+            "duration": float(transcript.get("duration") or 0),
+        }
+    )
 
 
 @app.post("/jobs/{job_id}/review")
