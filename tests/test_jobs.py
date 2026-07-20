@@ -57,6 +57,26 @@ def test_private_feed_items_are_isolated_by_secret_token(tmp_path: Path) -> None
     assert store.list_private_feed_items("c" * 43) is None
 
 
+def test_claim_private_feed_merges_anonymous_items_into_account_feed(tmp_path: Path) -> None:
+    store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    anonymous_token = "a" * 43
+    account_token = "b" * 43
+    shared_job = new_job_id()
+    anonymous_job = new_job_id()
+    store.add_private_feed_item(account_token, shared_job, "Existing account item", 100)
+    store.add_private_feed_item(anonymous_token, shared_job, "Updated item", 120)
+    store.add_private_feed_item(anonymous_token, anonymous_job, "Anonymous item", 200)
+
+    claimed = store.claim_private_feed(anonymous_token, account_token, "user-1")
+
+    assert claimed == 2
+    assert store.list_private_feed_items(anonymous_token) is None
+    account_items = store.list_private_feed_items(account_token)
+    assert account_items is not None
+    assert {item["job_id"] for item in account_items} == {shared_job, anonymous_job}
+    assert store.claim_private_feed(anonymous_token, account_token, "user-1") == 0
+
+
 class FakeCloud:
     def __init__(self, payload: dict) -> None:
         self.payload = payload
@@ -82,3 +102,36 @@ def test_cloud_json_is_authoritative_over_warm_local_cache(tmp_path: Path) -> No
 
     assert payload["status"] == "needs_review"
     assert cloud.downloads == 1
+
+
+def test_cached_transcript_only_reuses_highlights_from_requested_prompt_version(
+    tmp_path: Path,
+) -> None:
+    class CacheCloud:
+        def find_jobs_by_audio_url(self, _audio_url: str) -> list[dict]:
+            return [{"id": "11111111-1111-4111-8111-111111111111"}]
+
+        def download_json_artifact(self, _job_id: str, name: str) -> dict:
+            if name == "transcript.json":
+                return {"duration": 60, "segments": []}
+            return {
+                "selection": {"mode": "library", "prompt_version": 4},
+                "highlights": [{"id": "old-fragment"}],
+            }
+
+    store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    store.cloud = CacheCloud()  # type: ignore[assignment]
+
+    current = store.find_cached_transcript(
+        "https://cdn.example.test/episode.mp3",
+        {"mode": "library", "prompt_version": 5},
+    )
+    old = store.find_cached_transcript(
+        "https://cdn.example.test/episode.mp3",
+        {"mode": "library", "prompt_version": 4},
+    )
+
+    assert current is not None and current[0]["duration"] == 60
+    assert current[1] is None
+    assert old is not None and old[1] is not None
+    assert old[1]["highlights"][0]["id"] == "old-fragment"

@@ -5,6 +5,8 @@ import pytest
 
 from podcast_editor.pipeline.highlights import (
     MAX_HIGHLIGHT_RESPONSE_TOKENS,
+    PROMPT_VERSION,
+    SYSTEM_PROMPT,
     RetryableHighlightDetectionError,
     call_claude,
     detect_highlights,
@@ -51,7 +53,7 @@ def test_enrich_highlights_adds_ids_and_matching_text() -> None:
         {"start": 25.0, "end": 30.0, "text": "לא רלוונטי"},
     ]
 
-    selection = {"mode": "library", "prompt_version": 4}
+    selection = {"mode": "library", "prompt_version": PROMPT_VERSION}
     enriched = enrich_highlights(payload, transcript, selection)
 
     assert enriched["highlights"][0]["id"] == "h01"
@@ -113,6 +115,17 @@ def test_call_claude_avoids_deprecated_temperature_parameter() -> None:
     content = json.loads(captured["messages"][0]["content"])
     assert content["editorial_preferences"]["topic"] == "יזמות"
     assert content["editorial_preferences"]["target_minutes"] == 12
+
+
+def test_editorial_prompt_requires_complete_conversational_passages() -> None:
+    assert PROMPT_VERSION == 5
+    assert "editorially complete, independently listenable passage" in SYSTEM_PROMPT
+    assert "Completeness is more important than brevity" in SYSTEM_PROMPT
+    assert "Never begin or end mid-sentence" in SYSTEM_PROMPT
+    assert "question, premise, setup" in SYSTEM_PROMPT
+    assert "through the speaker's reasoning" in SYSTEM_PROMPT
+    assert "There is no target or maximum highlight duration" in SYSTEM_PROMPT
+    assert "editorial boundary check" in SYSTEM_PROMPT
 
 
 def test_invalid_provider_json_retries_in_a_new_invocation(monkeypatch, tmp_path) -> None:

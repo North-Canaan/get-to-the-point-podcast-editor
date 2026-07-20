@@ -167,7 +167,9 @@ class JobStore:
             return StatusRecord(job_id=job_id, status=JobStatus.queued)
         return StatusRecord.model_validate(payload)
 
-    def find_cached_transcript(self, audio_url: str) -> tuple[dict, dict | None, str] | None:
+    def find_cached_transcript(
+        self, audio_url: str, highlight_selection: dict | None = None
+    ) -> tuple[dict, dict | None, str] | None:
         if not self.cloud:
             return None
         transcript_only = None
@@ -177,7 +179,7 @@ class JobStore:
             if transcript:
                 highlights = self.cloud.download_json_artifact(source_job_id, "highlights.json")
                 selection = (highlights or {}).get("selection", {})
-                if highlights and selection == {"mode": "library", "prompt_version": 4}:
+                if highlights and highlight_selection is not None and selection == highlight_selection:
                     return transcript, highlights, source_job_id
                 if transcript_only is None:
                     transcript_only = (transcript, None, source_job_id)
@@ -256,6 +258,35 @@ class JobStore:
     def private_feed_contains(self, token: str, job_id: str) -> bool:
         items = self.list_private_feed_items(token)
         return bool(items and any(item["job_id"] == job_id for item in items))
+
+    def claim_private_feed(self, anonymous_token: str, account_token: str, user_id: str) -> int:
+        anonymous_hash = self.private_feed_token_hash(anonymous_token)
+        account_hash = self.private_feed_token_hash(account_token)
+        if anonymous_hash == account_hash:
+            return 0
+        if self.cloud:
+            return self.cloud.claim_private_feed(anonymous_hash, account_hash, user_id)
+
+        path = self.settings.data_dir / "private_feeds.json"
+        feeds = self._read_local_feeds(path)
+        source = feeds.get(anonymous_hash)
+        if not source:
+            return 0
+        if source.get("user_id") == user_id:
+            return 0
+        if source.get("user_id") is not None:
+            raise PermissionError("anonymous feed is already associated with another account")
+        target = feeds.setdefault(account_hash, {"items": [], "user_id": user_id})
+        existing = {item["job_id"]: item for item in target.get("items", [])}
+        for item in source.get("items", []):
+            existing[item["job_id"]] = item
+        target["items"] = list(existing.values())
+        target["user_id"] = user_id
+        claimed = len(source.get("items", []))
+        feeds.pop(anonymous_hash, None)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(feeds, ensure_ascii=False, indent=2), encoding="utf-8")
+        return claimed
 
     @staticmethod
     def private_feed_token_hash(token: str) -> str:

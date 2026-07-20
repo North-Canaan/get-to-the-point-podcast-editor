@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from ..config import Settings
 from ..jobs import JobStore
 from ..schemas import JobStatus
-from .highlights import RetryableHighlightDetectionError, detect_highlights
+from .highlights import PROMPT_VERSION, RetryableHighlightDetectionError, detect_highlights
 from .ingest import MAX_RSS_RESPONSE_BYTES
 from ..security import public_http_request, validate_public_http_url
 
@@ -25,7 +25,9 @@ def submit_no_worker_job(
 ) -> dict:
     validate_public_http_url(source_url)
     resolved_url = resolve_audio_url(source_url)
-    cached = store.find_cached_transcript(resolved_url)
+    cached = store.find_cached_transcript(
+        resolved_url, {"mode": "library", "prompt_version": PROMPT_VERSION}
+    )
     if cached:
         transcript, highlights, source_job_id = cached
         input_payload = {

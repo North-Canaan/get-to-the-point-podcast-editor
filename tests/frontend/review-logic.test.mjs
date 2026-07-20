@@ -7,9 +7,12 @@ import {
   SAFE_OUTPUT_BYTES,
   estimateMp3Bytes,
   filterValidHighlights,
+  interleaveTransitionFiles,
   minimumOutputFits,
   needsCompressedEditing,
-  selectedOutputSeconds
+  selectedHighlightCountsByTopic,
+  selectedOutputSeconds,
+  totalOutputSeconds
 } from "../../public/assets/review-logic.js";
 
 test("invalid highlight ranges never reach the review picker", () => {
@@ -28,12 +31,46 @@ test("invalid highlight ranges never reach the review picker", () => {
   assert.deepEqual(filterValidHighlights(undefined), []);
 });
 
+test("topics retain an indicator while any of their highlights are selected", () => {
+  const highlights = [
+    { id: "a", topic: "Science" },
+    { id: "b", topic: "Science" },
+    { id: "c", topic: "Health" },
+    { id: "d", topic: "  " }
+  ];
+  const decisions = new Map([
+    ["a", { decision: "approve" }],
+    ["b", { decision: "reject" }],
+    ["c", { decision: "approve" }],
+    ["d", { decision: "approve" }]
+  ]);
+
+  assert.deepEqual(
+    [...selectedHighlightCountsByTopic(highlights, decisions)],
+    [["Science", 1], ["Health", 1]]
+  );
+  decisions.get("a").decision = "";
+  assert.deepEqual([...selectedHighlightCountsByTopic(highlights, decisions)], [["Health", 1]]);
+});
+
 test("selected duration includes padding and clamps to source boundaries", () => {
   const seconds = selectedOutputSeconds(
     [{ start: 0.1, end: 1 }, { start: 9.8, end: 10 }],
     10
   );
   assert.equal(seconds, 1.8);
+});
+
+test("transitions are inserted only between highlights and included in estimates", () => {
+  const clips = ["one.mp3", "two.mp3", "three.mp3"];
+  assert.deepEqual(
+    interleaveTransitionFiles(clips, "pause.mp3"),
+    ["one.mp3", "pause.mp3", "two.mp3", "pause.mp3", "three.mp3"]
+  );
+  assert.deepEqual(interleaveTransitionFiles(clips, ""), clips);
+  assert.ok(Math.abs(
+    totalOutputSeconds([{ start: 0, end: 10 }, { start: 20, end: 30 }], 40, 0.5) - 21.4
+  ) < 0.0001);
 });
 
 test("malformed segments do not poison the selected duration with NaN", () => {

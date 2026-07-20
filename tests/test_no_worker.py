@@ -137,7 +137,11 @@ def test_submit_reuses_cached_transcript_without_assemblyai(monkeypatch, tmp_pat
     monkeypatch.setattr(
         store,
         "find_cached_transcript",
-        lambda url: (transcript, None, "11111111-1111-4111-8111-111111111111"),
+        lambda url, selection: (
+            transcript,
+            None,
+            "11111111-1111-4111-8111-111111111111",
+        ),
     )
 
     payload = no_worker.submit_no_worker_job(
@@ -165,7 +169,11 @@ def test_submit_reuses_cached_highlights_too(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(
         store,
         "find_cached_transcript",
-        lambda url: (transcript, highlights, "11111111-1111-4111-8111-111111111111"),
+        lambda url, selection: (
+            transcript,
+            highlights,
+            "11111111-1111-4111-8111-111111111111",
+        ),
     )
 
     no_worker.submit_no_worker_job(

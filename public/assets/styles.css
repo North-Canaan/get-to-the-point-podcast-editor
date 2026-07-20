@@ -671,7 +671,8 @@ main section {
 }
 
 .highlight-controls legend,
-.length-control > span:first-child {
+.length-control > span:first-child,
+.transition-control > span:first-child {
   margin-bottom: 8px;
   font-weight: 680;
 }
@@ -717,6 +718,17 @@ main section {
   color: #fff;
 }
 
+.topic-option.has-selection span {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.topic-option.has-selection span::after {
+  content: "✓";
+  margin-left: 7px;
+  font-weight: 800;
+}
+
 .topic-option input:focus-visible + span {
   outline: 3px solid rgba(15, 118, 110, 0.38);
   outline-offset: 2px;
@@ -725,6 +737,21 @@ main section {
 .length-control {
   display: grid;
   justify-items: start;
+}
+
+.transition-control {
+  display: grid;
+  justify-items: start;
+}
+
+.transition-control select {
+  min-height: 44px;
+  padding: 8px 36px 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
 }
 
 .length-control input {

@@ -8,7 +8,7 @@ from anthropic import Anthropic
 from ..config import Settings
 from ..jobs import JobStore
 
-PROMPT_VERSION = 4
+PROMPT_VERSION = 5
 
 SYSTEM_PROMPT = """You are editing a long, unedited podcast into a tight highlight reel. You will receive the language declared by the podcast's RSS feed and a diarized transcript: a list of segments, each with an id, start/end time in seconds, a speaker label, and text, plus editorial preferences.
 
@@ -16,13 +16,24 @@ First, infer the conversational roles. The host/interviewer is the speaker who a
 
 Identify concise topic labels, written in the episode's declared language, that collectively describe the substantive topics covered in the episode. Use a stable, canonical label for each topic.
 
-Then build an exhaustive highlight library. For a long episode this may contain 50–100 highlights; do not stop after finding only the best few and do not optimize for a total edit duration. Capture every distinct, substantive, self-contained moment that a human editor might reasonably choose. Split long discussions into separate highlights when they contain multiple independently useful ideas, but do not create duplicates or filler.
+Then build an exhaustive highlight library. For a long episode this may contain 50–100 highlights; do not stop after finding only the best few and do not optimize for a total edit duration. Capture every distinct, substantive moment that a human editor might reasonably choose. Do not optimize highlights for shortness or treat an isolated quote, claim, or sentence as a highlight.
 
-Prioritize moments where the guest makes a substantive or surprising claim, reveals specific first-hand detail, pushes back or disagrees, explains a mechanism, tells a meaningful story, or delivers a self-contained idea that moves the conversation forward. Down-weight host monologues, small talk, throat-clearing, repetition, ad reads, and crosstalk. Keep the interviewer only when their question is required to make the guest's answer intelligible.
+A highlight is an editorially complete, independently listenable passage that contains one complete thought, argument, explanation, story, or conversational exchange as it was expressed on the podcast. It must make sense to a listener who has not heard the material immediately before or after it. Completeness is more important than brevity; a strong highlight may last several minutes and may contain multiple speakers.
+
+Choose boundaries like a human audio editor:
+- First locate the valuable idea or payoff. Then scan backward to include the natural beginning: the question, premise, setup, definition, or earlier turn required to understand it.
+- Scan forward through the speaker's reasoning, examples, qualifications, and relevant back-and-forth until the idea reaches its conclusion or the conversation naturally transitions.
+- Start and end on natural transcript-segment boundaries. Never begin or end mid-sentence, mid-answer, mid-story, during unresolved crosstalk, or before a question receives its relevant answer.
+- Do not leave dangling pronouns, unexplained references, missing premises, or an ending that promises a conclusion outside the clip.
+- Include the interviewer or another speaker whenever their question, challenge, or response is necessary to preserve the meaning and conversational flow.
+- Prefer a longer coherent passage over a shorter fragment. There is no target or maximum highlight duration.
+- Split a long discussion only at a genuine editorial transition, and only when every resulting highlight remains complete and independently understandable. Avoid duplicate highlights and unnecessary overlap.
+
+Prioritize passages where the guest makes a substantive or surprising claim, reveals specific first-hand detail, pushes back or disagrees, explains a mechanism, tells a meaningful story, or develops an idea that moves the conversation forward. Down-weight host monologues, small talk, throat-clearing, repetition, ad reads, and irrelevant crosstalk.
 
 Assign every highlight exactly one canonical topic label from the top-level topics list. Topic labels are navigation filters for the highlight library, so every topic should have at least one highlight and every highlight must belong to a topic.
 
-Prefer segments that stand on their own. When a strong answer starts a few seconds before or after a segment boundary, extend the start/end to capture the complete thought. Order them by importance, not by timestamp.
+Before returning each highlight, perform an editorial boundary check: could someone listen only from `start` to `end` and understand the setup, substance, and resolution without hearing the neighboring transcript? If not, expand or adjust its boundaries. Order highlights by editorial importance, not by timestamp. The `speaker` field should name the primary speaker, even when the complete passage contains multiple speakers.
 
 Write every "reason" field in the episode's declared language. Return ONLY valid JSON, no preamble, no markdown fences, matching this schema exactly:
 ```

@@ -379,6 +379,22 @@ class SupabaseClient:
             response.raise_for_status()
             return response.json()
 
+    def claim_private_feed(
+        self, anonymous_token_hash: str, account_token_hash: str, user_id: str
+    ) -> int:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{self.url}/rest/v1/rpc/claim_anonymous_private_feed",
+                headers={**self.headers, "Content-Type": "application/json"},
+                json={
+                    "anonymous_hash": anonymous_token_hash,
+                    "account_hash": account_token_hash,
+                    "account_user_id": user_id,
+                },
+            )
+            response.raise_for_status()
+            return int(response.json() or 0)
+
 
 def storage_object_not_found(response: httpx.Response) -> bool:
     if response.status_code == 404:

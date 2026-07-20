@@ -32,7 +32,7 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
     review_html = Path("public/review.html").read_text(encoding="utf-8")
     assert "selection-size-warning" in review_html
     assert 'from "/assets/review-logic.js"' in review_html
-    assert "needsCompressedEditing(metadata, orderedSegments)" in review_html
+    assert "needsCompressedEditing(metadata, orderedSegments, transitionSeconds())" in review_html
     assert "blob.size > HARD_OUTPUT_BYTES" in review_html
 
 

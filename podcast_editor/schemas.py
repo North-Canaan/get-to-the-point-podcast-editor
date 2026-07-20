@@ -104,6 +104,10 @@ class PrivateFeedRequest(BaseModel):
     token: str = Field(min_length=32, max_length=256, pattern=r"^[A-Za-z0-9_-]+$")
 
 
+class ClaimAnonymousFeedRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class CompleteOutputRequest(BaseModel):
     size_bytes: int = Field(ge=1, le=1_000_000_000)
 
@@ -134,6 +138,7 @@ class ReviewSegment(BaseModel):
 
 class ReviewRequest(BaseModel):
     ordered_segments: list[ReviewSegment] = Field(min_length=1, max_length=500)
+    transition_seconds: float = Field(default=0.5, ge=0, le=2)
 
     @field_validator("ordered_segments")
     @classmethod

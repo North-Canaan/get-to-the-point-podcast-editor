@@ -9,6 +9,12 @@
       <section><h2>Episode history</h2><div class="episode-list" id="account-jobs"><p>Loading your episodes…</p></div></section>
     </main>
     <script type="module">
+      import { claimAnonymousFeed } from "/assets/feed-claim.js";
+      try {
+        await claimAnonymousFeed();
+      } catch (error) {
+        console.error("Anonymous feed claim failed", error);
+      }
       const response = await fetch("/me");
       if (response.status === 401) location.href = "/auth.html?returnTo=/account.html";
       else if (!response.ok) document.querySelector("#account-jobs").textContent = "Could not load your account.";

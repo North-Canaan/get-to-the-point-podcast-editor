@@ -68,6 +68,14 @@
           <span><input id="target-minutes" type="number" min="1" max="120" value="15" /> minutes</span>
         </label>
         <button class="button" id="update-highlights" hidden type="button">Find highlights</button>
+        <label class="transition-control" for="transition-seconds">
+          <span>Pause between highlights</span>
+          <select id="transition-seconds">
+            <option value="0">None</option>
+            <option value="0.5" selected>Short · 0.5 sec</option>
+            <option value="1">Relaxed · 1 sec</option>
+          </select>
+        </label>
       </section>
       <section class="highlight-list" id="highlight-list" aria-label="Highlight candidates" hidden></section>
       <div class="actions" id="produce-actions" hidden>
@@ -114,7 +122,9 @@
         HARD_OUTPUT_BYTES,
         LARGE_SOURCE_BYTES,
         filterValidHighlights,
-        selectedOutputSeconds,
+        interleaveTransitionFiles,
+        selectedHighlightCountsByTopic,
+        totalOutputSeconds,
         estimateMp3Bytes,
         needsCompressedEditing
       } from "/assets/review-logic.js";
@@ -157,6 +167,7 @@
       const produceActions = document.querySelector("#produce-actions");
       const selectionCount = document.querySelector("#selection-count");
       const selectionSizeWarning = document.querySelector("#selection-size-warning");
+      const transitionSecondsControl = document.querySelector("#transition-seconds");
       const list = document.querySelector("#highlight-list");
       const audio = document.querySelector("#audio");
       const produce = document.querySelector("#produce");
@@ -171,11 +182,13 @@
       const feedHelp = document.querySelector("#feed-help");
       const produceLog = document.querySelector("#produce-log");
       const FADE_SECONDS = 0.02;
+      const CURRENT_HIGHLIGHT_PROMPT_VERSION = 5;
 
       podcastFeedAction.addEventListener("click", () => {
         listeningCard.scrollIntoView({ behavior: "smooth", block: "start" });
         privateFeedUrl.focus({ preventScroll: true });
       });
+      transitionSecondsControl.addEventListener("change", syncActions);
 
       const pathMatch = location.pathname.match(/\/jobs\/([^/]+)\/review/);
       const requestedJobId = pathMatch?.[1] || new URLSearchParams(location.search).get("job_id");
@@ -302,7 +315,10 @@
         const response = await fetch(`/jobs/${state.jobId}/review`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ordered_segments: approved })
+          body: JSON.stringify({
+            ordered_segments: approved,
+            transition_seconds: transitionSeconds()
+          })
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -383,7 +399,7 @@
         audio.src = `/jobs/${jobId}/audio`;
         audioWrap.hidden = false;
         applyHighlights(payload.highlights);
-        if (payload.highlights.selection?.prompt_version !== 4) {
+        if (payload.highlights.selection?.prompt_version !== CURRENT_HIGHLIGHT_PROMPT_VERSION) {
           setStatus("Building the complete highlight library…", "Updating this episode with exhaustive, topic-tagged highlights.");
           updateHighlights.click();
         }
@@ -442,6 +458,7 @@
         choices.forEach((choice, index) => {
           const label = document.createElement("label");
           label.className = "topic-option";
+          label.dataset.topic = choice.value;
           const input = document.createElement("input");
           input.type = "radio";
           input.name = "highlight-topic";
@@ -452,6 +469,24 @@
           text.textContent = choice.label;
           label.append(input, text);
           topicOptions.append(label);
+        });
+        syncTopicSelectionIndicators();
+      }
+
+      function syncTopicSelectionIndicators() {
+        const selectedCounts = selectedHighlightCountsByTopic(state.allHighlights, state.decisions);
+        topicOptions.querySelectorAll(".topic-option").forEach((label) => {
+          const topic = label.dataset.topic || "";
+          const count = selectedCounts.get(topic) || 0;
+          label.classList.toggle("has-selection", count > 0);
+          const input = label.querySelector("input");
+          const text = label.querySelector("span");
+          if (input && text) {
+            input.setAttribute(
+              "aria-label",
+              count > 0 ? `${text.textContent}, ${count} selected` : text.textContent
+            );
+          }
         });
       }
 
@@ -574,6 +609,7 @@
       }
 
       function syncActions() {
+        syncTopicSelectionIndicators();
         const selectedTotal = [...state.decisions.values()].filter((item) => item.decision === "approve").length;
         const hasApproval = selectedTotal > 0;
         const hasHighlights = state.highlights.length > 0;
@@ -581,7 +617,11 @@
         selectAllHighlights.disabled = !hasHighlights;
         unselectAllHighlights.disabled = !hasHighlights;
         const approved = hasApproval ? approvedSegments() : [];
-        const selectedSeconds = selectedOutputSeconds(approved, state.audioMetadata?.duration);
+        const selectedSeconds = totalOutputSeconds(
+          approved,
+          state.audioMetadata?.duration,
+          transitionSeconds()
+        );
         const estimatedBytes = estimateMp3Bytes(selectedSeconds, STANDARD_OUTPUT_KBPS);
         const minimumEstimatedBytes = estimateMp3Bytes(selectedSeconds, 32);
         const cannotFit = minimumEstimatedBytes > SAFE_OUTPUT_BYTES;
@@ -879,10 +919,10 @@
         state.audioMetadata = metadata;
         syncActions();
         const estimatedBytes = estimateMp3Bytes(
-          selectedOutputSeconds(orderedSegments, metadata.duration),
+          totalOutputSeconds(orderedSegments, metadata.duration, transitionSeconds()),
           STANDARD_OUTPUT_KBPS
         );
-        if (needsCompressedEditing(metadata, orderedSegments)) {
+        if (needsCompressedEditing(metadata, orderedSegments, transitionSeconds())) {
           const reason = metadata.size_bytes > LARGE_SOURCE_BYTES
             ? `Large source detected (${formatBytes(metadata.size_bytes)})`
             : `Large edit detected (about ${formatBytes(estimatedBytes)} at standard quality)`;
@@ -949,13 +989,25 @@
             "libmp3lame",
             "-b:a",
             "128k",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
             name
           ]);
         }
 
+        const transitionName = await createSilentTransition(
+          ffmpeg,
+          clipNames.length > 1 ? transitionSeconds() : 0,
+          128,
+          "transition.mp3"
+        );
+        const concatNames = interleaveTransitionFiles(clipNames, transitionName);
+
         await ffmpeg.writeFile(
           "concat.txt",
-          new TextEncoder().encode(clipNames.map((name) => `file '${name}'`).join("\n") + "\n")
+          new TextEncoder().encode(concatNames.map((name) => `file '${name}'`).join("\n") + "\n")
         );
         state.progressBase = 85;
         state.progressSpan = 10;
@@ -1003,7 +1055,11 @@
         );
         stopElapsedProgress();
 
-        const selectedSeconds = selectedOutputSeconds(orderedSegments, metadata.duration);
+        const selectedSeconds = totalOutputSeconds(
+          orderedSegments,
+          metadata.duration,
+          transitionSeconds()
+        );
         const maximumKbps = Math.floor((43_000_000 * 8) / Math.max(1, selectedSeconds) / 1000);
         const bitrate = [128, 112, 96, 80, 64, 48, 32].find((value) => value <= maximumKbps) || 32;
         appendProduceLog(`Compressing ${formatDuration(selectedSeconds)} of selected audio at ${bitrate}kbps.`);
@@ -1049,16 +1105,27 @@
             "libmp3lame",
             "-b:a",
             `${bitrate}k`,
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
             clipName
           ]);
           await ffmpeg.deleteFile(inputName);
           if (exitCode !== 0) throw new Error(`Could not compress highlight ${index + 1}`);
           clipNames.push(clipName);
         }
+        const transitionName = await createSilentTransition(
+          ffmpeg,
+          clipNames.length > 1 ? transitionSeconds() : 0,
+          bitrate,
+          "large_transition.mp3"
+        );
+        const concatNames = interleaveTransitionFiles(clipNames, transitionName);
         setWorkingStatus("Assembling the edited episode…", "Joining the selected audio ranges.", 94);
         await ffmpeg.writeFile(
           "large_concat.txt",
-          new TextEncoder().encode(clipNames.map((name) => `file '${name}'`).join("\n") + "\n")
+          new TextEncoder().encode(concatNames.map((name) => `file '${name}'`).join("\n") + "\n")
         );
         const concatExitCode = await ffmpeg.exec([
           "-f",
@@ -1078,6 +1145,30 @@
           throw new Error(`Edited audio is still too large (${formatBytes(blob.size)}). Select fewer highlights.`);
         }
         return blob;
+      }
+
+      function transitionSeconds() {
+        const seconds = Number(transitionSecondsControl.value);
+        return Number.isFinite(seconds) ? Math.max(0, Math.min(2, seconds)) : 0;
+      }
+
+      async function createSilentTransition(ffmpeg, seconds, bitrate, filename) {
+        if (!(seconds > 0)) return "";
+        const exitCode = await ffmpeg.exec([
+          "-f",
+          "lavfi",
+          "-i",
+          "anullsrc=r=44100:cl=stereo",
+          "-t",
+          seconds.toFixed(3),
+          "-c:a",
+          "libmp3lame",
+          "-b:a",
+          `${bitrate}k`,
+          filename
+        ]);
+        if (exitCode !== 0) throw new Error("Could not create transitions between highlights");
+        return filename;
       }
 
       async function fetchSameOriginAudioRange(

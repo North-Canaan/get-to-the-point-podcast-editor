@@ -24,6 +24,7 @@ from .pipeline.ingest import IngestError, list_feed_episodes
 from .schemas import (
     CreateJobRequest,
     CreateJobResponse,
+    ClaimAnonymousFeedRequest,
     CompleteOutputRequest,
     FeedEpisodesResponse,
     FeedLibraryResponse,
@@ -65,6 +66,7 @@ RATE_RULES = (
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/advance$"), 60, 30),
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/(?:review|edits|private-feed)$"), 3600, 30),
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/private-feed/email$"), 3600, 3),
+    ("POST", re.compile(r"^/me/claim-anonymous-feed$"), 3600, 10),
     ("GET", re.compile(r"^/jobs/[0-9a-f-]+/state$"), 60, 30),
 )
 
@@ -673,6 +675,20 @@ def me(request: Request) -> JSONResponse:
             "user": {"id": user["id"], "name": user.get("name"), "email": user.get("email")},
             "feed_url": f"/private-feed/{token}.xml",
             "jobs": store.list_user_jobs(user["id"]),
+        }
+    )
+
+
+@app.post("/me/claim-anonymous-feed")
+def claim_anonymous_feed(payload: ClaimAnonymousFeedRequest, request: Request) -> JSONResponse:
+    user = current_user(request, settings)
+    account_token = personal_feed_token(str(user["id"]), settings)
+    claimed = store.claim_private_feed(payload.token, account_token, str(user["id"]))
+    return JSONResponse(
+        {
+            "ok": True,
+            "claimed_episodes": claimed,
+            "feed_url": f"/private-feed/{account_token}.xml",
         }
     )
 

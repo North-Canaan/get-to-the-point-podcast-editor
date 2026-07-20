@@ -28,7 +28,8 @@
         </form>
       </section>
     </main>
-    <script>
+    <script type="module">
+      import { claimAnonymousFeed } from "/assets/feed-claim.js";
       const form = document.querySelector("#auth-form");
       const title = document.querySelector("#auth-title");
       const submit = document.querySelector("#auth-submit");
@@ -58,6 +59,10 @@
           const response = await fetch(`/api/auth/${mode}/email`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.message || "Authentication failed");
+          status.textContent = "Associating your existing episodes…";
+          await claimAnonymousFeed().catch((error) => {
+            console.error("Anonymous feed claim failed", error);
+          });
           const requestedReturn = new URLSearchParams(location.search).get("returnTo") || "/account.html";
           const destination = new URL(requestedReturn, location.origin);
           location.href = destination.origin === location.origin ? `${destination.pathname}${destination.search}${destination.hash}` : "/account.html";
