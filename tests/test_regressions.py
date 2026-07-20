@@ -210,6 +210,32 @@ def test_signed_in_user_can_claim_anonymous_feed(monkeypatch, tmp_path: Path) ->
     assert test_store.list_private_feed_items(anonymous_token) is None
 
 
+def test_account_page_migrates_derived_feed_to_email_override(
+    monkeypatch, tmp_path: Path
+) -> None:
+    test_settings = Settings(
+        data_dir=tmp_path,
+        state_backend="filesystem",
+        better_auth_secret="account-migration-secret",
+    )
+    test_store = JobStore(test_settings)
+    user = {"id": "replacement-user-id", "email": "osamet67@gmail.com"}
+    derived_token = personal_feed_token(user["id"], test_settings)
+    preferred_token = "XZcZIbk48mC7uNs55thzlygcbSN6VnL7KvxK0DrNzuI"
+    job_id = new_job_id()
+    test_store.add_private_feed_item(derived_token, job_id, "Existing edit", 123, user["id"])
+    monkeypatch.setattr(main_module, "settings", test_settings)
+    monkeypatch.setattr(main_module, "store", test_store)
+    monkeypatch.setattr(main_module, "current_user", lambda *_args: user)
+
+    response = TestClient(app).get("/me")
+
+    assert response.status_code == 200
+    assert response.json()["feed_url"] == f"/private-feed/{preferred_token}.xml"
+    assert test_store.private_feed_contains(preferred_token, job_id)
+    assert test_store.list_private_feed_items(derived_token) is None
+
+
 def test_private_feed_revision_changes_guid_and_uses_canonical_origin(
     monkeypatch, tmp_path: Path
 ) -> None:

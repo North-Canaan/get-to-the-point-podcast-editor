@@ -16,7 +16,12 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .auth import current_user, optional_current_user, personal_feed_token_for_user
+from .auth import (
+    current_user,
+    optional_current_user,
+    personal_feed_token,
+    personal_feed_token_for_user,
+)
 from .jobs import JobStore, new_job_id, validate_job_id
 from .email_delivery import send_private_feed_email
 from .pipeline.no_worker import advance_no_worker_job, submit_no_worker_job
@@ -670,6 +675,9 @@ def email_private_feed(job_id: str, request: Request) -> JSONResponse:
 def me(request: Request) -> JSONResponse:
     user = current_user(request, settings)
     token = personal_feed_token_for_user(user, settings)
+    derived_token = personal_feed_token(str(user["id"]), settings)
+    if token != derived_token:
+        store.claim_private_feed(derived_token, token, str(user["id"]))
     return JSONResponse(
         {
             "user": {"id": user["id"], "name": user.get("name"), "email": user.get("email")},
