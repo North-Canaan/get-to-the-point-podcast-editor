@@ -30,10 +30,13 @@ def test_review_page_rewrite_does_not_intercept_review_submission() -> None:
     )
     assert vercel_csp == main_module.SECURITY_HEADERS["Content-Security-Policy"]
     review_html = Path("public/review.html").read_text(encoding="utf-8")
+    auth_script = Path("public/assets/auth.js").read_text(encoding="utf-8")
     assert "selection-size-warning" in review_html
     assert 'from "/assets/review-logic.js"' in review_html
     assert "needsCompressedEditing(metadata, orderedSegments, transitionSeconds())" in review_html
     assert "blob.size > HARD_OUTPUT_BYTES" in review_html
+    assert 'import("/assets/feed-claim.js")' in auth_script
+    assert "await claimAnonymousFeed()" in auth_script
 
 
 def test_canonical_base_url_never_uses_localhost_when_production_origin_is_trusted(
