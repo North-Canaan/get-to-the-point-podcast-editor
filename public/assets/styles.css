@@ -199,6 +199,117 @@ a {
   gap: 24px;
 }
 
+.account-history {
+  padding-top: 22px;
+}
+
+.account-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.account-section-heading h2 {
+  margin: 0;
+}
+
+.account-section-heading span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.account-episode-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.account-episode-list > p {
+  margin: 0;
+  padding: 14px 16px;
+}
+
+.account-episode-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 54px;
+  padding: 8px 10px 8px 14px;
+}
+
+.account-episode-row + .account-episode-row {
+  border-top: 1px solid var(--line);
+}
+
+.account-episode-copy {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 10px;
+}
+
+.account-episode-copy h3 {
+  overflow: hidden;
+  margin: 0;
+  font-size: 0.94rem;
+  font-weight: 680;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-episode-copy time {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.account-episode-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.episode-status {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eef1f3;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.5;
+  text-transform: capitalize;
+}
+
+.episode-status.status-done {
+  background: #e8f5ef;
+  color: var(--ok);
+}
+
+.episode-status.status-error {
+  background: #fff1f0;
+  color: var(--danger);
+}
+
+.compact-open {
+  min-height: 34px;
+  padding: 6px 9px;
+  border-radius: 5px;
+  color: var(--accent-dark);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.compact-open:hover,
+.compact-open:focus-visible {
+  background: rgba(15, 118, 110, 0.09);
+}
+
 .link-button {
   padding: 0;
   border: 0;
@@ -445,6 +556,25 @@ a {
 
   .feed-library {
     grid-template-columns: 1fr;
+  }
+
+  .account-episode-row {
+    gap: 8px;
+    min-height: 50px;
+    padding-left: 12px;
+  }
+
+  .account-episode-copy {
+    display: grid;
+    gap: 2px;
+  }
+
+  .account-episode-actions {
+    gap: 2px;
+  }
+
+  .episode-status {
+    display: none;
   }
 }
 

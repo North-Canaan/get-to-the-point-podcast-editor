@@ -8,6 +8,11 @@ from fastapi import HTTPException, Request
 from .config import Settings
 
 
+PERSONAL_FEED_TOKEN_OVERRIDES = {
+    "osamet67@gmail.com": "XZcZIbk48mC7uNs55thzlygcbSN6VnL7KvxK0DrNzuI",
+}
+
+
 def current_user(request: Request, settings: Settings) -> dict:
     if not settings.better_auth_url:
         raise HTTPException(status_code=503, detail="Sign-in is not configured")
@@ -57,3 +62,10 @@ def personal_feed_token(user_id: str, settings: Settings) -> str:
         settings.better_auth_secret.encode(), user_id.encode(), hashlib.sha256
     ).digest()
     return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
+def personal_feed_token_for_user(user: dict, settings: Settings) -> str:
+    email = str(user.get("email") or "").strip().lower()
+    if token := PERSONAL_FEED_TOKEN_OVERRIDES.get(email):
+        return token
+    return personal_feed_token(str(user["id"]), settings)

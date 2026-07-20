@@ -2,7 +2,12 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from podcast_editor.auth import current_user, optional_current_user, personal_feed_token
+from podcast_editor.auth import (
+    current_user,
+    optional_current_user,
+    personal_feed_token,
+    personal_feed_token_for_user,
+)
 from podcast_editor.config import Settings
 
 
@@ -99,3 +104,20 @@ def test_personal_feed_token_is_stable_and_user_specific(tmp_path) -> None:
     settings = Settings(data_dir=tmp_path, better_auth_secret="secret-value-that-is-long-enough")
     assert personal_feed_token("user-1", settings) == personal_feed_token("user-1", settings)
     assert personal_feed_token("user-1", settings) != personal_feed_token("user-2", settings)
+
+
+def test_personal_feed_token_override_is_case_insensitive(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path, better_auth_secret="test-secret")
+
+    assert personal_feed_token_for_user(
+        {"id": "current-user-id", "email": "OSAMET67@GMAIL.COM"}, settings
+    ) == "XZcZIbk48mC7uNs55thzlygcbSN6VnL7KvxK0DrNzuI"
+
+
+def test_personal_feed_token_for_other_user_uses_user_id(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path, better_auth_secret="test-secret")
+    user = {"id": "user-1", "email": "listener@example.com"}
+
+    assert personal_feed_token_for_user(user, settings) == personal_feed_token(
+        "user-1", settings
+    )

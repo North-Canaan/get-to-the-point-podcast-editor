@@ -6,7 +6,7 @@
     <main class="section-inner account-shell">
       <h1>My episodes</h1><p id="account-name"></p>
       <section class="card"><h2>Personal podcast feed</h2><p>Your completed edits appear in this private feed.</p><div class="feed-copy-row"><input id="account-feed" readonly /><button class="button secondary" id="copy-account-feed">Copy feed URL</button></div></section>
-      <section><h2>Episode history</h2><div class="episode-list" id="account-jobs"><p>Loading your episodes…</p></div></section>
+      <section class="account-history"><div class="account-section-heading"><h2>Episode history</h2><span id="episode-count" hidden></span></div><div class="account-episode-list" id="account-jobs"><p>Loading your episodes…</p></div></section>
     </main>
     <script type="module">
       import { claimAnonymousFeed } from "/assets/feed-claim.js";
@@ -23,18 +23,30 @@
         document.querySelector("#account-name").textContent = data.user.email;
         document.querySelector("#account-feed").value = new URL(data.feed_url, location.origin).href;
         const jobs = document.querySelector("#account-jobs"); jobs.replaceChildren();
+        const episodeCount = document.querySelector("#episode-count");
+        episodeCount.textContent = `${data.jobs.length} ${data.jobs.length === 1 ? "episode" : "episodes"}`;
+        episodeCount.hidden = false;
         if (!data.jobs.length) {
           const empty = document.createElement("p");
           empty.textContent = "No episodes yet. Choose one from the podcast library.";
           jobs.append(empty);
         }
         for (const job of data.jobs) {
-          const item = document.createElement("article"); item.className = "episode-card";
+          const item = document.createElement("article"); item.className = "account-episode-row";
           const title = document.createElement("h3"); title.textContent = job.episode_title || (job.status === "done" ? "Edited episode" : "Episode in progress");
-          const detail = document.createElement("p"); detail.textContent = job.status.replaceAll("_", " ");
-          const copy = document.createElement("div"); copy.append(title, detail);
-          const open = document.createElement("a"); open.className = "button secondary"; open.href = `/review.html?job_id=${job.id}`; open.textContent = "Open";
-          item.append(copy, open);
+          const date = document.createElement("time");
+          const timestamp = job.updated_at || job.created_at;
+          if (timestamp) {
+            date.dateTime = timestamp;
+            date.textContent = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(timestamp));
+          }
+          const copy = document.createElement("div"); copy.className = "account-episode-copy"; copy.append(title);
+          if (timestamp) copy.append(date);
+          const actions = document.createElement("div"); actions.className = "account-episode-actions";
+          const detail = document.createElement("span"); detail.className = `episode-status status-${job.status}`; detail.textContent = job.status === "done" ? "Ready" : job.status.replaceAll("_", " ");
+          const open = document.createElement("a"); open.className = "compact-open"; open.href = `/review.html?job_id=${job.id}`; open.textContent = "Open"; open.setAttribute("aria-label", `Open ${title.textContent}`);
+          actions.append(detail, open);
+          item.append(copy, actions);
           jobs.append(item);
         }
       }

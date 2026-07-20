@@ -164,7 +164,11 @@ def test_signed_in_feed_ignores_browser_token(monkeypatch, tmp_path: Path) -> No
     expected_token = personal_feed_token("user-1", test_settings)
     monkeypatch.setattr(main_module, "settings", test_settings)
     monkeypatch.setattr(main_module, "store", test_store)
-    monkeypatch.setattr(main_module, "optional_current_user", lambda *_args: {"id": "user-1"})
+    monkeypatch.setattr(
+        main_module,
+        "optional_current_user",
+        lambda *_args: {"id": "user-1", "email": "listener@example.com"},
+    )
 
     response = TestClient(app).post(
         f"/jobs/{job_id}/private-feed", json={"token": browser_token}
@@ -189,7 +193,11 @@ def test_signed_in_user_can_claim_anonymous_feed(monkeypatch, tmp_path: Path) ->
     account_token = personal_feed_token("user-1", test_settings)
     monkeypatch.setattr(main_module, "settings", test_settings)
     monkeypatch.setattr(main_module, "store", test_store)
-    monkeypatch.setattr(main_module, "current_user", lambda *_args: {"id": "user-1"})
+    monkeypatch.setattr(
+        main_module,
+        "current_user",
+        lambda *_args: {"id": "user-1", "email": "listener@example.com"},
+    )
 
     response = TestClient(app).post(
         "/me/claim-anonymous-feed", json={"token": anonymous_token}

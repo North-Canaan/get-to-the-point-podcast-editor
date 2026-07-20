@@ -1,633 +1,593 @@
-# Automatic Podcast Feed Editing: Backend Processing Plan
+# Automatic Podcast Feed Editing: Lean Backend Plan
 
-Status: proposed for technical review  
+Status: revised proposal for technical and legal sanity check
 Date: 2026-07-20  
-Audience: product, backend, infrastructure, security, and audio-engineering reviewers
+Audience: product, engineering, infrastructure, security, and legal reviewers
 
-## 1. Executive summary
+## 1. Decision summary
 
-Users should be able to subscribe to a source podcast once and receive automatically shortened,
-highlight-only versions of future episodes in their personal RSS feed. The system should poll source
-feeds daily, reuse transcript and highlight analysis across subscribers, apply each subscriber's
-editing recipe, render a verified MP3 without an open browser, and publish it exactly once.
+Build the 5–10 user beta with four services:
 
-The recommended architecture is:
+- **Vercel + FastAPI:** user-facing subscription APIs, account UI, status, and personal RSS routes.
+- **Supabase Postgres:** subscriptions, canonical source episodes, durable processing state, uniqueness,
+  and subscriber deliveries.
+- **Modal:** one daily scheduled poller plus serverless Python functions for analysis and native-FFmpeg
+  rendering. Modal supplies execution, retries, timeouts, logs, and scale-to-zero.
+- **Cloudflare R2:** final MP3 enclosures. Keep transcript/highlight JSON in Supabase Storage.
 
-- Keep Vercel/FastAPI as the synchronous control plane and user-facing API.
-- Keep Supabase Postgres and Storage as the system of record.
-- Use Supabase Cron for the daily scheduler, calling a secured Vercel dispatch endpoint.
-- Treat Postgres tables plus atomic claim functions as the durable work queue for the MVP.
-- Add a separately deployed, continuously runnable Python worker with native FFmpeg and ffprobe.
-- Continue using AssemblyAI for transcription and Claude for the shared highlight library.
-- Render subscriber-specific outputs only after shared analysis is complete.
-- Publish to personal RSS only after storage and media verification succeeds.
+Keep AssemblyAI and Claude for V1. Do not add generated voice. Use the existing 0.5-second silent
+transition by default.
 
-The first release should not generate spoken transitions. It should use the existing configurable
-silent transition and a simple, deterministic highlight-selection recipe.
+This revision deliberately removes:
 
-## 2. Problem statement
+- An always-on worker.
+- Supabase Cron and the Vercel cron-dispatch endpoint.
+- A hand-built Postgres queue with leases, heartbeats, and a sweeper.
+- Internal poll/sweep APIs.
+- A `processing_events` table.
+- A large metrics/alerts program and phase-gate process.
 
-The current product requires a user to choose highlights and keep a browser open while ffmpeg.wasm
-creates the final MP3. That cannot support unattended processing of newly published podcast episodes.
-It also repeats work if multiple users edit the same source episode.
+Modal retries do **not** replace database idempotency. Supabase remains the durable record of what has
+happened; every Modal function is re-entrant and safe to execute more than once.
 
-The backend needs to separate shared source analysis from subscriber-specific selection and rendering,
-while guaranteeing that retries, overlapping polls, malformed feeds, and partial uploads never create
-duplicate or broken RSS entries.
+## 2. Why this architecture
 
-## 3. Goals
+The current application renders in the browser with ffmpeg.wasm. Automatic subscriptions have no open
+browser and need native FFmpeg in a process that can run for minutes or hours. Modal supports scheduled
+Python functions, per-function retries, scale-to-zero, and function timeouts up to 24 hours. That is a
+better fit for beta volume than operating a persistent worker and distributed lease protocol.
 
-### User goals
+Published MP3 traffic behaves differently from compact application artifacts: podcast clients may
+download full enclosures repeatedly. R2 Standard storage currently includes 10 GB-month, 1 million
+Class A operations, 10 million Class B operations, and direct egress without transfer fees. Supabase's
+current free tier includes 1 GB file storage and 5 GB each of cached and uncached egress; paid overage
+is tied to bandwidth. R2 therefore isolates enclosure growth from the database/storage provider.
 
-1. A subscriber receives a playable edited episode without returning to the website.
-2. A source episode appears in the personal feed no more than 24 hours after discovery under normal
-   provider availability.
-3. Every output contains complete highlights, remains within the configured duration policy, and plays
-   in major podcast applications.
-4. A user can see whether each episode is detected, analyzing, rendering, published, or failed.
-5. A user can pause a subscription and retry a failed episode.
+Pricing snapshot, verified 2026-07-20; recheck before implementation:
 
-### System goals
+- [Modal pricing](https://modal.com/pricing): Starter includes $30/month compute credit, up to 100
+  containers, and pay-per-second CPU/memory billing.
+- [Modal schedules](https://modal.com/docs/guide/cron),
+  [retries](https://modal.com/docs/guide/retries), and
+  [timeouts](https://modal.com/docs/guide/timeouts).
+- [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/).
+- [Supabase pricing](https://supabase.com/pricing) and
+  [egress documentation](https://supabase.com/docs/guides/platform/manage-your-usage/egress).
 
-1. Transcribe and analyze each canonical source episode once, regardless of subscriber count.
-2. Make feed discovery, analysis, rendering, and publication idempotent.
-3. Recover automatically from process termination and transient provider failures.
-4. Enforce per-user and global cost limits before expensive work begins.
-5. Preserve the current manual editing workflow while the automatic workflow is introduced.
+## 3. Product definition
 
-## 4. Non-goals for V1
+A signed-in user subscribes to a public RSS feed and chooses an automatic editing recipe. Once daily,
+the system discovers new episodes, creates one shared transcript/highlight analysis per canonical
+episode, produces a subscriber-specific edit, verifies it, stores it in R2, and adds it to the user's
+personal RSS feed.
 
-- No cloned host or guest voices.
-- No AI-written spoken transitions.
-- No historical full-catalog imports; subscriptions default to future episodes only.
-- No arbitrary natural-language editing recipes.
-- No guarantee that an episode is available at an exact wall-clock time.
-- No attempt to process DRM-protected, authenticated, or non-downloadable audio.
-- No replacement of the existing manual browser editor.
+### V1 recipe
 
-## 5. Product behavior
-
-### Subscription recipe
-
-V1 exposes these settings:
-
-- Source RSS URL.
-- Target duration: 15, 30, 45, or 60 minutes.
-- Topic mode: all topics or a saved subset.
-- Minimum highlight score: default 7.
-- Pause between highlights: none, 0.5 seconds, or 1 second.
+- Target duration: 15, 30, 45, or 60 minutes; default 30.
+- All topics or a saved subset.
+- Minimum highlight score; default 7.
+- Pause between highlights: none, 0.5 seconds, or 1 second; default 0.5.
 - Start policy: future episodes only, or process the newest current episode once.
 - Active or paused.
 
-### Selection policy
+### V1 selection policy
 
-For each subscriber delivery:
-
-1. Discard malformed, empty, or overlapping duplicate candidates.
-2. Filter by configured topics and minimum score.
-3. Rank by score, then editorial importance order returned by the analysis model.
+1. Reject malformed or empty candidates.
+2. Filter by selected topics and minimum score.
+3. Rank by score, then Claude's editorial order.
 4. Add complete highlights until the target duration is reached.
-5. Permit exceeding the target by one complete highlight; never truncate a highlight to hit the target.
-6. Remove candidates whose time range substantially overlaps an already selected candidate.
-7. Restore chronological source order for final playback.
-8. Require at least one selected highlight; otherwise mark the delivery `no_matching_highlights` and do
-   not publish an empty episode.
+5. Permit one complete highlight to exceed the target; never truncate a highlight.
+6. Remove substantial time-range overlaps.
+7. Restore chronological order for playback.
+8. If none qualify, mark the delivery `no_matching_highlights` and publish nothing.
 
-The policy version is stored with every delivery so future algorithm changes do not silently alter
-retries of an existing delivery.
+Store `recipe_snapshot` and `selection_policy_version` on every delivery. Changing a subscription only
+affects future episodes.
 
-## 6. High-level architecture
+## 4. Goals and non-goals
+
+### Goals
+
+- New eligible episodes require no browser or manual editing.
+- Shared source analysis runs once even when several users subscribe to the same podcast.
+- Duplicate schedules, retries, and function crashes cannot create duplicate RSS items.
+- No RSS entry is published until its MP3 passes media and storage verification.
+- Five invited users can use the feature for two weeks without operator intervention.
+- Hard caps bound transcription, analysis, rendering, storage, and egress exposure.
+
+### Non-goals
+
+- No voice cloning, spoken transitions, or AI-written bridges.
+- No authenticated, DRM-protected, or private source feeds.
+- No historical full-catalog import.
+- No natural-language recipes.
+- No re-analysis workflow when `analysis_version` changes. Keep the column only.
+- No paid tier or faster-than-daily polling in V1.
+- No bespoke workflow engine, durable queue product, or audit-event subsystem.
+
+## 5. Blocking legal/product question
+
+Before a public launch, obtain an explicit legal review of automatically creating and serving derivative
+edits of third-party podcast audio. The intended posture is private, per-user personal-use time-shifting,
+but that is a product description—not a legal conclusion. Review source-feed terms, copyright exposure,
+retention, takedown handling, and whether any publisher opt-out is required.
+
+For the invited beta:
+
+- Support only publicly downloadable RSS enclosures.
+- Keep feeds private and token-gated.
+- Do not market or expose edited files publicly.
+- Document a takedown path.
+- Record the source feed and enclosure for every output.
+
+This is the only blocking non-engineering decision. Ad removal is best-effort model judgment in V1 and
+must be described that way.
+
+## 6. Architecture
 
 ```mermaid
 flowchart LR
-    Cron["Supabase Cron: daily"] --> Dispatch["Vercel dispatch API"]
-    Dispatch --> Subscriptions["Claim due subscriptions"]
-    Subscriptions --> Fetch["Bounded RSS fetch"]
-    Fetch --> Episodes["Canonical source episodes"]
-    Episodes --> AnalysisQueue["Shared analysis jobs"]
-    AnalysisQueue --> Providers["AssemblyAI + Claude"]
-    Providers --> Library["Transcript + highlight library"]
-    Library --> DeliveryQueue["Subscriber deliveries"]
-    DeliveryQueue --> Worker["Native FFmpeg worker"]
-    Worker --> Storage["Supabase private storage"]
-    Storage --> Verify["ffprobe + storage verification"]
-    Verify --> FeedItems["Personal RSS items"]
+    User["User"] --> API["Vercel / FastAPI"]
+    API --> DB["Supabase Postgres"]
+    Cron["Modal daily schedule"] --> Poll["Poll subscribed source feeds"]
+    Poll --> DB
+    Poll --> Analyze["Modal analyze_episode.spawn"]
+    Analyze --> Assembly["AssemblyAI"]
+    Analyze --> Claude["Claude"]
+    Analyze --> Artifacts["Supabase Storage: JSON"]
+    Analyze --> Render["Modal render_delivery.spawn"]
+    Render --> R2["Cloudflare R2: MP3"]
+    Render --> DB
+    API --> RSS["Personal RSS"]
+    RSS --> Redirect["Fresh signed R2 redirect"]
+    Redirect --> R2
 ```
 
-### Component responsibilities
+### Service boundaries
 
-#### Vercel/FastAPI control plane
+#### Vercel/FastAPI
 
-- Subscription CRUD and account authorization.
-- Cron authentication and lightweight dispatch.
-- Status APIs and personal RSS serving.
-- Feed URL validation and SSRF protections shared with manual ingestion.
-- No long-running audio processing.
+- Authenticate users and enforce ownership.
+- Create, update, pause, and delete subscriptions.
+- Display delivery status and actionable failures.
+- Serve personal RSS XML.
+- For enclosure GET/HEAD, create a short-lived signed R2 URL and redirect; do not proxy MP3 bytes.
+- Optionally request an immediate Modal retry after the beta proves a need. Daily reconciliation is
+  sufficient initially.
 
-#### Supabase Postgres
+#### Supabase
 
-- Subscription, source episode, analysis, and delivery state.
-- Atomic job claiming, leases, uniqueness constraints, retry timestamps, and audit history.
-- Durable coordination between stateless APIs and workers.
+- Store all durable control state and uniqueness constraints.
+- Store compact transcript/highlight JSON artifacts.
+- Remain authoritative when Modal call outputs/logs expire.
+- Do not act as a work queue and do not store final podcast enclosures.
 
-#### Supabase Storage
+#### Modal
 
-- Shared transcript and highlight artifacts.
-- Subscriber-specific rendered MP3s.
-- Temporary render uploads, promoted only after verification.
+- Run the daily scheduled poller.
+- Spawn one analysis call per newly discovered canonical episode.
+- Wait/poll for AssemblyAI inside the analysis call for V1, persisting the provider ID first.
+- Spawn subscriber-specific render calls after analysis is ready.
+- Run native FFmpeg and ffprobe in an image with pinned versions.
+- Apply retries, timeouts, and conservative `max_containers` limits.
 
-#### Native media worker
+Waiting for AssemblyAI consumes some Modal memory allocation. This is accepted at beta scale because it
+removes another callback/poller workflow. Revisit provider webhooks or split submission/polling only if
+measured cost or timeout behavior warrants it.
 
-- Claims one runnable task at a time through an atomic database function.
-- Downloads or streams approved source audio.
-- Runs native FFmpeg/ffprobe.
-- Inserts silent transitions and performs final encoding.
-- Uploads to a temporary object, verifies it, then marks the delivery publishable.
-- Sends lease heartbeats and records structured progress.
+#### Cloudflare R2
 
-## 7. Why a separate worker is required
+- Store only verified final MP3s and short-lived temporary render uploads.
+- Use the S3-compatible API from Modal and Vercel.
+- Keep the bucket private.
+- Apply lifecycle deletion to abandoned temporary objects after 48 hours.
+- Delete published objects after 90 days and remove their RSS items in the same retention job.
 
-Browser ffmpeg.wasm requires an active user session and has repeatedly encountered memory, timeout,
-range-fetch, and upload constraints on large episodes. Vercel cron invocations have the same duration
-limits as Vercel Functions and are not retried automatically. Vercel also documents that cron events
-can overlap or be delivered more than once, requiring explicit locking and idempotency.
+## 7. Minimal data model
 
-The scheduler should therefore enqueue bounded work and return quickly. Native audio processing belongs
-in a worker environment with FFmpeg, persistent execution, controllable memory, and no browser lifecycle.
-
-References:
-
-- [Vercel Cron management](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
-- [Supabase Cron](https://supabase.com/docs/guides/cron)
-
-## 8. Proposed data model
-
-All tables use UUID primary keys, timestamps, RLS, service-role-only mutation, and explicit indexes for
-claim queries.
-
-### `feed_subscriptions`
-
-| Column | Purpose |
-|---|---|
-| `id` | Subscription identity |
-| `user_id` | Better Auth user |
-| `feed_url` | Original submitted URL |
-| `normalized_feed_url` | Canonical deduplication URL |
-| `title` | Display title |
-| `status` | `active`, `paused`, `error`, `deleted` |
-| `recipe_json` | Validated, versioned editing recipe |
-| `etag` / `last_modified` | Conditional HTTP polling |
-| `last_polled_at` | Most recent attempt |
-| `next_poll_at` | Scheduler eligibility |
-| `consecutive_failures` | Backoff and UI state |
-| `last_error_code` | Stable, non-secret error classification |
-| `created_at` / `updated_at` | Audit timestamps |
-
-Constraints:
-
-- Unique active subscription on `(user_id, normalized_feed_url)`.
-- `recipe_json` validated by the API before storage.
-- Index on `(status, next_poll_at)`.
+Use four new tables. Enable and force RLS; revoke browser roles; expose only service-side operations.
 
 ### `source_feeds`
 
-Stores one shared record per normalized feed URL, including conditional request metadata. Multiple user
-subscriptions reference the same source feed.
+- `id`
+- `normalized_url` — unique
+- `title`
+- `etag`, `last_modified`
+- `last_polled_at`, `last_poll_error`
+- `created_at`, `updated_at`
+
+### `feed_subscriptions`
+
+- `id`
+- `user_id`
+- `source_feed_id`
+- `status` — `active`, `paused`, `deleted`
+- `recipe_json`
+- `start_after` — prevents historical import
+- `created_at`, `updated_at`
+
+Constraint: one non-deleted subscription per `(user_id, source_feed_id)`.
 
 ### `source_episodes`
 
-| Column | Purpose |
-|---|---|
-| `id` | Canonical episode identity |
-| `source_feed_id` | Parent source feed |
-| `rss_guid` | Original GUID when supplied |
-| `identity_hash` | Stable deduplication key |
-| `enclosure_url` | Validated audio URL |
-| `enclosure_url_hash` | Secondary deduplication key |
-| `title`, `published_at`, `language` | Episode metadata |
-| `analysis_job_id` | Shared analysis job |
-| `created_at` / `updated_at` | Audit timestamps |
+This row also holds shared analysis state; no separate analysis-job table is needed for V1.
+
+- `id`
+- `source_feed_id`
+- `rss_guid`
+- `identity_hash` — unique
+- `enclosure_url`, `enclosure_url_hash`
+- `title`, `published_at`, `language`
+- `analysis_status` — `queued`, `analyzing`, `ready`, `failed`
+- `analysis_version`
+- `assemblyai_transcript_id`
+- `transcript_storage_path`, `highlights_storage_path`
+- `analysis_attempts`, `analysis_error_code`
+- `created_at`, `updated_at`
 
 Identity precedence:
 
-1. Hash of feed identity plus non-empty RSS GUID.
-2. Otherwise hash of feed identity plus normalized enclosure URL.
-3. Publication date and title are metadata, not primary identity.
+1. Hash of normalized feed identity plus a non-empty RSS GUID.
+2. Otherwise hash of normalized feed identity plus normalized enclosure URL.
+3. Publication date and title are metadata, never primary identity.
 
-### `analysis_jobs`
-
-One per source episode and analysis-policy version.
-
-State: `queued -> transcribing -> detecting_highlights -> ready`, with `retry_wait`, `failed`, and
-`cancelled` terminal/side states.
-
-Important columns:
-
-- `source_episode_id`, `analysis_version`, `status`.
-- Provider IDs and artifact paths.
-- `attempt_count`, `next_attempt_at`.
-- `lease_owner`, `lease_expires_at`, `heartbeat_at`.
-- `error_code`, sanitized `error_detail`.
-- Unique `(source_episode_id, analysis_version)`.
+Keep `analysis_version`, but do not build automatic re-analysis on version changes.
 
 ### `subscription_deliveries`
 
-One subscriber-specific output per source episode and recipe version.
+- `id`
+- `subscription_id`, `source_episode_id`
+- `job_id` — unique reference to an existing `jobs` row for current account/history/RSS compatibility
+- `status` — `waiting`, `processing`, `published`, `no_matching_highlights`, `failed`
+- `recipe_snapshot_json`, `selection_policy_version`
+- `selected_highlight_ids_json`
+- `expected_duration_seconds`
+- `modal_call_id` — diagnostic only, not durable truth
+- `attempts`, `last_error_code`
+- `r2_object_key`, `output_size_bytes`, `output_duration_seconds`, `output_sha256`
+- `published_at`, `created_at`, `updated_at`
 
-State: `waiting_for_analysis -> queued -> selecting -> rendering -> verifying -> published`, with
-`retry_wait`, `no_matching_highlights`, `failed`, and `cancelled` states.
+Constraint: unique `(subscription_id, source_episode_id)`.
 
-Important columns:
+Create the subscriber-owned `jobs` row when inserting the delivery, using existing job states for the
+account UI (`queued`, `splicing`, `done`, `error`). Reuse the existing personal feed/item tables with
+that `job_id`. A delivery publishes at most one item. This avoids a second RSS item model and keeps old
+download/account routes compatible while `subscription_deliveries` holds the automatic workflow detail.
 
-- `subscription_id`, `source_episode_id`, `analysis_job_id`.
-- Immutable `recipe_snapshot_json` and `selection_policy_version`.
-- Selected highlight IDs and expected duration.
-- Output storage path, size, duration, bitrate, and checksum.
-- Lease, retry, progress, and error fields matching analysis jobs.
-- Unique `(subscription_id, source_episode_id)`.
+## 8. Idempotency without a queue subsystem
 
-### `processing_events`
+Modal execution is at least once. Correctness comes from deterministic keys, unique constraints,
+conditional updates, and re-entrant functions:
 
-Append-only operational history:
+- `source_episodes.identity_hash` prevents duplicate discovery.
+- `(subscription_id, source_episode_id)` prevents duplicate deliveries.
+- `assemblyai_transcript_id` is stored immediately after submission; a retry reuses it.
+- Transcript/highlight artifact keys derive from source episode ID and analysis version.
+- Final R2 object keys derive from delivery ID and recipe version.
+- Each delivery has one subscriber-owned job row; personal feed items remain unique per account feed
+  and delivery job.
+- Publication uses a transaction and is always the final state change.
+- A function first inspects database state and existing artifacts, then resumes from the first missing
+  stage rather than restarting blindly.
 
-- Entity type and ID.
-- Old/new state.
-- Attempt and worker ID.
-- Stable event code and sanitized metadata.
-- Timestamp.
+Use guarded updates such as `UPDATE ... WHERE status IN (...)`, but do not implement leases or
+heartbeats. Two duplicate render calls may occasionally perform redundant compute; they must converge
+on one verified object/feed item. At beta volume, accepting rare duplicate compute is cheaper than
+building distributed exclusion machinery.
 
-Retain detailed events for 30 days, then aggregate or delete.
+Do not rely on Modal Queue objects as durable state; Modal documents that their persistence is not
+guaranteed and their default partition TTL is 24 hours. Postgres rows remain authoritative.
 
-## 9. Queue and lease semantics
+## 9. End-to-end flow
 
-Postgres acts as the MVP queue. Workers never select and update jobs in separate operations.
+### A. Daily Modal schedule
 
-Provide security-definer functions such as:
+1. Query active subscriptions and group them by `source_feed_id`.
+2. Poll each distinct feed once with saved ETag/Last-Modified headers.
+3. Enforce SSRF, DNS/IP, redirect, response-size, timeout, and entry-count limits.
+4. Upsert new canonical source episodes.
+5. Insert eligible subscriber delivery/job pairs transactionally with `ON CONFLICT DO NOTHING`.
+6. Spawn `analyze_episode(source_episode_id)` only for episodes not already ready/current.
+7. Reconcile incomplete rows: respawn eligible `queued`, `analyzing`, `waiting`, or `processing` work
+   older than the configured threshold.
 
-- `claim_next_analysis_job(worker_id, lease_seconds)`
-- `claim_next_delivery(worker_id, lease_seconds)`
-- `heartbeat_analysis_job(job_id, worker_id, lease_seconds)`
-- `heartbeat_delivery(delivery_id, worker_id, lease_seconds)`
-- `complete_delivery(delivery_id, worker_id, verification_payload)`
+Limit one scheduled poller with bounded fan-out. Set an explicit Modal `max_containers` rather than
+allowing the account maximum.
 
-Claim functions use `FOR UPDATE SKIP LOCKED`, increment the attempt number, set a bounded lease, and
-return the claimed row in one transaction. Completion succeeds only when the caller still owns the
-lease. A sweeper makes expired work claimable again; it does not blindly mark expired work successful.
+### B. Shared analysis function
 
-This approach is adequate for the initial expected volume and avoids introducing Redis/SQS before it
-is needed. Revisit a managed queue when claim traffic, database contention, or worker count becomes
-material.
+`analyze_episode(source_episode_id)` is re-entrant:
 
-## 10. End-to-end processing flow
+1. Return if current-version transcript and highlight artifacts are already validated.
+2. Resolve and validate the public enclosure URL again.
+3. If no AssemblyAI provider ID exists, submit once and persist the returned ID immediately.
+4. Poll AssemblyAI with bounded backoff until complete or the function timeout approaches.
+5. Save and validate transcript JSON in Supabase Storage.
+6. Call Claude for the exhaustive complete-thought highlight library.
+7. Validate JSON, ranges, topics, and scores; store the artifact.
+8. Mark the source episode `ready` through a guarded update.
+9. Spawn `render_delivery(delivery_id)` for each waiting delivery.
 
-### A. Daily scheduling
+Retry transient failures through Modal. Persist stable error codes and increment attempts. On retry,
+reuse provider IDs and artifacts. After the configured maximum, mark `failed`; the daily reconciler does
+not respawn permanent failures.
 
-1. Supabase Cron calls `POST /internal/subscriptions/dispatch` with a rotating shared secret.
-2. The endpoint claims a bounded page of due source feeds, for example 25.
-3. It advances `next_poll_at` before external requests, preventing concurrent dispatches.
-4. It enqueues or invokes one bounded poll operation per claimed feed and returns within the function
-   duration limit.
+### C. Delivery render function
 
-One cron handles all subscriptions. Do not create one cron definition per user or feed.
+`render_delivery(delivery_id)` is re-entrant:
 
-### B. Feed polling
+1. Return if already published.
+2. Require ready shared analysis.
+3. Run the deterministic selection policy and persist selected IDs.
+4. If nothing qualifies, mark `no_matching_highlights`.
+5. Reject impossible output-size estimates before downloading source audio.
+6. Download the public enclosure through the hardened fetcher.
+7. Extract complete ranges with native FFmpeg and existing padding.
+8. Normalize clips to a common sample rate/channel layout.
+9. Insert the configured silent transition only between clips.
+10. Concatenate chronologically and encode MP3 at the highest bitrate that fits the size policy.
+11. Run ffprobe and SHA-256 locally.
+12. Upload to a unique temporary R2 key.
+13. Verify R2 HEAD, size, MIME, and a ranged read.
+14. Copy/promote to the deterministic final key.
+15. In one database transaction, mark `published` and insert/update the personal RSS item.
+    Mark the associated job `done` with its R2 storage key and verified size in the same transaction.
+16. Delete the temporary object.
 
-1. Validate the stored URL again against SSRF policy.
-2. Request with `If-None-Match` and `If-Modified-Since` when available.
-3. Enforce redirect count, response-size, content-type, DNS/IP pinning, and timeout limits.
-4. On `304`, update successful poll timestamps without parsing.
-5. Parse a bounded number of newest entries, initially 50.
-6. Upsert canonical `source_episodes` by identity hash.
-7. Create deliveries only for subscriptions active when the episode qualifies under their start policy.
-8. Create one shared analysis job if no current-version analysis exists.
+Use subprocess argument arrays. Never interpolate user text into shell commands, filenames, FFmpeg
+filters, R2 keys, or logs.
 
-### C. Shared analysis
+### D. RSS enclosure delivery
 
-1. Resolve and validate the enclosure URL.
-2. Submit transcription once and persist the provider ID before returning.
-3. Poll provider state in later leased invocations; never hold a process while waiting.
-4. Store transcript JSON and checksum.
-5. Generate the exhaustive, complete-thought highlight library using the current prompt version.
-6. Validate ranges, topics, scores, and response structure.
-7. Store highlight JSON and checksum.
-8. Mark analysis ready and release waiting deliveries.
+1. Personal RSS continues to expose an application enclosure URL.
+2. GET/HEAD verifies the private feed token and delivery membership.
+3. The route generates a fresh, short-lived R2 signed URL and returns a redirect.
+4. The podcast application downloads directly from R2.
 
-### D. Subscriber selection
+Generate method-appropriate signatures for GET and HEAD, and preserve existing job/output route
+compatibility by selecting the storage backend from the job's output metadata. Test redirect, HEAD,
+Range, content-length, and MIME behavior in Apple Podcasts, Pocket Casts,
+Overcast, and AntennaPod before beta.
 
-1. Load the immutable recipe snapshot and validated highlight library.
-2. Run the deterministic selection policy.
-3. Persist selected highlight IDs, ranges, ordering, transition duration, and estimated output size.
-4. If no highlights qualify, stop without publishing.
-5. If minimum-bitrate output cannot fit the configured storage limit, fail before rendering with
-   `selection_too_large`.
+## 10. Failure handling
 
-### E. Native rendering
+Use Modal retries with exponential backoff for function-level transient failures. Application state
+classifies whether re-entry may continue.
 
-1. Obtain a short-lived source URL or download through a hardened fetcher.
-2. Use FFmpeg to extract complete ranges with existing boundary padding.
-3. Normalize every clip to a common sample rate/channel layout.
-4. Insert the configured silent transition only between clips.
-5. Concatenate in chronological order and encode to the selected bitrate.
-6. Write locally to a worker-scoped temporary directory.
-7. Run ffprobe and calculate SHA-256 before upload.
-8. Upload to a unique temporary storage key.
-
-Use an argument array rather than constructing shell command strings. Never include user-controlled
-text in filenames or FFmpeg filter expressions.
-
-### F. Verification and publication
-
-Verification requires all of the following:
-
-- Object exists and is privately stored.
-- Nonzero content length matches the recorded upload size.
-- MIME type is `audio/mpeg`.
-- ffprobe reports an audio stream and positive duration.
-- Duration is within an explicit tolerance of selected ranges plus transitions.
-- Size is below the hard output limit.
-- A ranged read or signed-URL HEAD succeeds.
-
-After verification, promote or copy the object to its final immutable key and transactionally:
-
-1. Mark the delivery `published`.
-2. Insert/update the personal RSS item.
-3. Store the revision timestamp used in the RSS GUID.
-
-Publication must be the final state transition. No feed item may reference a temporary or unverified
-object.
-
-## 11. API contracts
-
-### User APIs
-
-- `POST /subscriptions`
-  - Body: feed URL, recipe, start policy.
-  - Returns subscription and whether the newest episode was queued.
-- `GET /subscriptions`
-  - Lists subscriptions and latest processing status.
-- `PATCH /subscriptions/{id}`
-  - Updates future recipe settings or pauses/resumes.
-- `DELETE /subscriptions/{id}`
-  - Soft-deletes and stops future deliveries; does not silently remove already published episodes.
-- `GET /subscriptions/{id}/deliveries`
-  - Paginated processing history.
-- `POST /deliveries/{id}/retry`
-  - Requeues only eligible failed states and remains idempotent.
-
-All endpoints require Better Auth, enforce ownership server-side, use same-origin CSRF controls, and
-apply per-user rate limits.
-
-### Internal APIs
-
-- `POST /internal/subscriptions/dispatch`
-- `POST /internal/source-feeds/{id}/poll`
-- `POST /internal/processing/sweep-expired-leases`
-
-Internal endpoints require a dedicated secret, reject browser sessions as authorization, log caller
-identity, and accept idempotency keys.
-
-## 12. Retry policy
-
-| Failure | Retry behavior |
+| Failure | V1 behavior |
 |---|---|
-| RSS timeout, 429, or 5xx | 15 min, 2 hr, 8 hr, then next daily poll |
-| Permanent RSS 404/410 | Pause after 3 consecutive daily failures |
-| Transcription transient failure | Exponential backoff, maximum 5 attempts |
-| Claude timeout/rate limit/incomplete JSON | Exponential backoff, maximum 5 attempts |
-| Source audio 401/403/404 | One delayed retry, then permanent failure |
-| FFmpeg process failure | Retry twice on a clean worker; preserve logs |
-| Storage timeout/5xx | Retry upload using the same delivery/output key |
-| Verification mismatch | Delete temporary object and retry render once |
-| RSS publication transaction failure | Retry transaction; never rerender verified audio |
+| RSS timeout, 429, or 5xx | Save error; daily schedule retries next day |
+| RSS 404/410 | Pause source after 3 consecutive daily failures |
+| AssemblyAI transient error | Modal retry; reuse persisted provider ID |
+| Claude timeout/rate limit/incomplete JSON | Modal retry; maximum 5 attempts |
+| Source audio 401/403/404 | One retry, then permanent delivery failure |
+| FFmpeg failure | Two retries in fresh containers |
+| R2 upload failure | Retry with same delivery and a new temporary key |
+| Verification mismatch | Delete temporary object; rerender once |
+| Publication transaction failure | Retry publication without rerendering verified final object |
 
-Use randomized jitter. Retry counters are per stage so a storage failure does not repeat transcription.
+The daily schedule is also the simple reconciler. It looks for non-terminal rows older than 24 hours
+and respawns only those still under attempt limits. No lease sweeper is required.
 
-## 13. Idempotency rules
+## 11. Security and privacy
 
-- One source episode per canonical identity hash.
-- One analysis job per source episode and analysis version.
-- One delivery per subscription and source episode.
-- One final object key per delivery revision.
-- One personal feed item per feed and delivery job.
-- Provider submission IDs are stored before polling.
-- Every external side effect is preceded by durable intent and followed by durable confirmation.
-- Cron and internal API requests are safe to execute more than once.
+- Public RSS enclosures only for source audio.
+- Reuse existing bounded HTTP fetch, DNS/IP pinning, redirect revalidation, and SSRF denial logic.
+- Keep R2 private; issue short-lived signed redirects only after personal-feed authorization.
+- Put Supabase, AssemblyAI, Anthropic, and R2 credentials in Modal Secrets and the minimum necessary
+  Vercel environment variables.
+- Never include signed URLs, tokens, credentials, full provider responses, or transcript text in logs.
+- Apply and force RLS; revoke `anon` and `authenticated` access to new tables.
+- Validate recipe JSON and version it.
+- Sanitize errors before persistence/UI display.
+- Cap source duration, output duration, subscriptions, new episodes/day, retries, and object size.
+- Delete abandoned temporary R2 objects after 48 hours.
+- Remove 90-day-old final objects and their RSS rows together so feeds never point to deleted audio.
+- Retain transcripts/highlights indefinitely for reuse only if legal review approves; otherwise choose a
+  fixed retention period before beta.
 
-## 14. Security and privacy
+## 12. Cost controls and retention
 
-- Retain current DNS/IP validation, redirect validation, and bounded-fetch protections for feeds and
-  enclosure URLs.
-- Never expose service-role credentials to the browser or media worker logs.
-- Give the worker only the minimum database RPCs and storage permissions required.
-- Keep source artifacts and rendered outputs in private buckets.
-- Use short-lived signed URLs and never log their query strings.
-- Apply RLS and revoke direct `anon`/`authenticated` access to processing tables.
-- Sanitize provider errors before saving or showing them.
-- Validate recipe JSON against a strict schema and version.
-- Cap subscriptions, episode duration, weekly processed minutes, attempts, and storage per user.
-- Treat personal RSS tokens as bearer secrets; never expose token hashes in operational UIs.
-- Define deletion behavior: disabling a subscription stops new work, while account deletion removes
-  subscriber-specific outputs and feed rows according to a documented retention policy.
+Environment-configured launch caps:
 
-## 15. Cost controls
+- 5 active subscriptions per user.
+- 3 new episodes per subscription per day.
+- Future-only by default.
+- 6-hour maximum source duration.
+- 60-minute maximum target output.
+- 5 Modal render containers maximum initially.
+- 5 analysis attempts and 3 render attempts.
+- Global source-minutes/day cap; defer excess work rather than dropping it.
 
-Track cost-driving units before launch:
+Retention:
 
-- Source audio minutes transcribed.
-- Transcript characters/tokens analyzed.
-- TTS seconds, initially always zero.
-- Rendered output minutes.
-- Source and output storage bytes.
-- Storage egress bytes.
+- Transcript/highlight JSON: indefinite pending legal approval.
+- Published MP3 and corresponding RSS item: 90 days rolling.
+- Failed temporary R2 objects: 48 hours.
+- Database delivery metadata: retain after object expiry for debugging and usage history.
 
-Hard controls for V1:
+Track only the units needed to catch cost surprises:
 
-- Maximum 5 active subscriptions per user.
-- Maximum 3 newly processed episodes per subscription per day.
-- Default future-only behavior.
-- Maximum source duration of 6 hours.
-- Maximum target output of 60 minutes.
-- Global daily analysis-minute budget with queue deferral rather than silent dropping.
-- Reuse analysis by canonical source episode.
+- Source minutes submitted to AssemblyAI.
+- Claude input/output tokens.
+- Modal CPU-seconds and memory-seconds.
+- R2 stored GB, Class A writes, and Class B reads.
+- Published output minutes.
 
-The exact numbers are launch defaults and should be configurable without a migration.
+Do not build a budgeting subsystem for beta. Review provider dashboards and one SQL summary weekly.
 
-## 16. Observability and operations
+## 13. Minimal observability and operations
 
-### Metrics
+Use Modal's dashboard/logs plus database status fields.
 
-- Due feeds, poll attempts, poll latency, and poll failure rate.
-- New source episodes discovered per day.
-- Analysis queue depth and oldest queued age.
-- Delivery queue depth and oldest queued age.
-- Stage duration percentiles.
-- Provider errors by stable code.
-- Render attempts, verification failures, and output-size distribution.
-- Discovery-to-publication latency.
-- Duplicate suppression count.
-- Published enclosure HEAD/GET failure rate.
-- Processing minutes and estimated cost by user and provider.
+Required checks:
 
-### Alerts
+1. Alert if the daily scheduled function has no successful run in 26 hours.
+2. Daily SQL query for non-terminal source episodes or deliveries older than 24 hours.
+3. Modal failure notification/dashboard review during beta.
 
-- No successful scheduler run in 26 hours.
-- Oldest analysis or delivery job exceeds 2 hours during normal provider operation.
-- More than 10% of attempts fail in any stage over 30 minutes.
-- Any verified publication references a missing object.
-- Lease-expiry rate exceeds 5%.
-- Daily spend or processing units exceed configured thresholds.
+Required controls:
 
-### Runbook controls
-
-- Global pause for polling, analysis, rendering, or publication independently.
+- Global environment flag disabling new automatic processing.
 - Per-subscription pause.
-- Drain mode for worker deployments.
-- Retry one stage without repeating completed stages.
-- Inspect sanitized state/event history by source episode or delivery.
-- Reconcile published feed items against storage objects.
+- User-visible retry that marks a failed row eligible; the next schedule respawns it. Add immediate
+  Modal spawning only if daily retry latency becomes a real problem.
 
-## 17. Testing strategy
+No event table, queue-depth dashboard, drain mode, lease monitoring, or stage-level alert suite in V1.
 
-### Unit tests
+## 14. Testing plan
 
-- Feed identity normalization and GUID/enclosure fallback.
-- Recipe validation and versioning.
-- Highlight filtering, overlap removal, duration selection, and chronology.
-- Retry classification and backoff.
-- Expected duration and output-size calculations including transitions.
+### Unit tests — required
 
-### Database integration tests
+- Canonical feed URL and episode identity hashing.
+- GUID-first/enclosure-fallback behavior under feed mutation.
+- Recipe validation and immutable snapshots.
+- Score/topic filtering, overlap removal, duration target, and chronological output order.
+- Idempotent state-resume decisions.
+- Output duration/size estimates including transitions.
 
-- Concurrent claims return a job to only one worker.
-- Expired leases can be reclaimed; active leases cannot.
-- Duplicate cron/poll calls create one source episode and one delivery.
-- Completion fails for stale lease owners.
-- Publication and RSS insertion are atomic.
-- RLS prevents client access to processing tables.
+### Database integration tests — required
 
-### Media fixtures
+- Duplicate poll inputs produce one source episode and one delivery.
+- Guarded status transitions do not regress terminal state.
+- Duplicate publication produces one RSS item.
+- RLS blocks browser roles from all new tables.
 
-- Mono/stereo, differing sample rates, variable bitrate, malformed MP3, missing duration, very long
-  source, Unicode metadata, and sparse byte-range support.
-- Validate transition count, chronological order, duration tolerance, and output playability with
-  ffprobe.
+### Real media fixtures — required
 
-### End-to-end staging tests
+Use three representative podcasts rather than a large synthetic matrix:
 
-- Poll a controlled fixture feed, discover one episode, process it, and download it through personal RSS.
-- Repeat the same poll and cron request and assert no duplicates.
-- Terminate the worker during render and verify lease recovery.
-- Inject provider timeouts and storage upload mismatch.
-- Run the production RSS smoke test against a dedicated synthetic account after deployment.
+1. A long, large, variable-bitrate episode.
+2. A mono/non-44.1kHz episode with multiple speakers.
+3. An episode whose host/range behavior has previously failed in production.
 
-## 18. Rollout plan
+For each, verify ffprobe duration tolerance, transitions, chronological order, size, R2 HEAD/Range,
+and playback through the personal RSS route.
 
-### Phase 0: foundation and decisions — 2 to 3 days
+### End-to-end beta checks — required
 
-- Finalize recipe defaults and worker hosting choice.
-- Establish source/delivery schemas and state machines.
-- Define quotas, retention, and provider budgets.
-- Build controlled RSS/audio fixtures.
+- Controlled feed publishes one episode without an open browser.
+- Re-running the daily poll creates no duplicate output or RSS item.
+- Forced Modal retry resumes without resubmitting completed provider stages.
+- Failed verification publishes nothing.
+- Production smoke checks the newest three enclosures.
 
-Exit criterion: schema and state-machine review approved.
+Do not build concurrent-lease tests because V1 has no lease subsystem.
 
-### Phase 1: native renderer — 4 to 7 days
+## 15. Concrete implementation plan
 
-- Extract selection and rendering contracts from browser behavior.
-- Implement native FFmpeg rendering, silent transitions, ffprobe verification, and storage promotion.
-- Run manual jobs through both browser and server renderers for comparison.
+Expected effort: approximately 8–12 focused engineering days, followed by a two-week invited beta.
 
-Exit criterion: fixture matrix passes and outputs play in Apple Podcasts, Pocket Casts, Overcast, and
-AntennaPod.
+### Step 1: settle blockers and accounts — 0.5 to 1 day
 
-### Phase 2: durable processing — 4 to 6 days
+- Obtain initial legal/product review.
+- Create Modal workspace/secrets and R2 private bucket/API credentials.
+- Confirm R2 signed redirect compatibility with target podcast apps using one test object.
+- Lock launch caps and retention.
 
-- Add job tables, claim/heartbeat/complete RPCs, worker loop, retry policy, and events.
-- Add dashboards and global pause switches.
+Exit: legal beta posture documented and R2 delivery spike passes.
 
-Exit criterion: forced worker termination recovers without duplicate publication.
+### Step 2: schema and core logic — 1 to 1.5 days
 
-### Phase 3: subscription MVP — 5 to 8 days
+- Add four tables, constraints, indexes, RLS, and retention fields.
+- Extract canonical identity and automatic selection into pure, versioned functions.
+- Add unit and database regression tests.
 
-- Subscription APIs/UI, daily polling, canonical discovery, shared analysis, selection recipes, and
-  personal feed publication.
-- Future-only default and one-feed beta limit.
+Exit: duplicate discovery/delivery tests pass.
 
-Exit criterion: controlled feeds publish automatically for seven consecutive days.
+### Step 3: Modal foundation and polling — 1 to 1.5 days
 
-### Phase 4: limited beta and hardening — 1 to 2 weeks elapsed
+- Add `modal_app.py`, pinned Python dependencies, FFmpeg/ffprobe image, and secrets.
+- Add daily scheduled function and bounded feed fan-out.
+- Reuse hardened feed fetching and conditional request metadata.
 
-- Enable for internal users, then 5–10 invited accounts.
-- Tune quotas, retry timing, alerts, and selection quality.
-- Measure cost and discovery-to-publication latency.
+Exit: fixture feed discovery is idempotent across repeated runs.
 
-Exit criterion: at least 95% of eligible episodes publish without manual intervention and no duplicate
-RSS items occur.
+### Step 4: shared analysis — 1 to 1.5 days
 
-## 19. Acceptance criteria for V1
+- Implement re-entrant AssemblyAI submit/poll and Claude analysis.
+- Persist provider ID before waiting and artifacts before status transitions.
+- Configure retries, timeouts, attempt caps, and `max_containers`.
 
-- Given an active subscription and a new valid episode, when the daily poll runs, exactly one delivery
-  is created.
-- Given multiple subscribers to the same episode, only one current-version transcript and highlight
-  analysis is generated.
-- Given a target duration, selected highlights remain complete and the final order is chronological.
-- Given a worker crash, the delivery becomes claimable after lease expiry and eventually completes.
-- Given duplicate cron or poll delivery, no duplicate analysis, output, or RSS item is created.
-- Given an oversized expected output, rendering is rejected before downloading the full source.
-- Given a failed or unverifiable upload, no personal RSS entry is published.
-- Given a paused subscription, no newly discovered episode creates a delivery for that user.
-- Given a permanent feed error, the user sees an actionable status and other subscriptions continue.
-- Given account deletion, subscriber-specific records and outputs follow the documented deletion policy.
+Exit: a forced retry reuses the AssemblyAI job and completes once.
 
-## 20. Success metrics
+### Step 5: rendering, R2, and publication — 2 to 3 days
 
-Evaluate after the first 30 beta days:
+- Implement selection, native FFmpeg rendering, transitions, ffprobe, checksums, and bitrate policy.
+- Add R2 temporary/final upload and verification.
+- Add transactional RSS publication and R2 redirecting enclosure routes.
+- Run the three real media fixtures.
 
-- At least 95% of eligible episodes published without manual intervention.
-- Fewer than 1% permanent processing failures, excluding unsupported/unavailable source audio.
-- Zero duplicate RSS items.
-- Zero RSS items pointing to missing or unverified audio.
-- Median discovery-to-publication under 60 minutes once an episode is detected.
-- At least 50% of beta users keep one subscription active after four weeks.
-- Shared-analysis reuse on at least 20% of deliveries once feeds overlap between users.
-- Processing cost per published hour stays below the agreed launch budget.
+Exit: no feed item can reference a missing/unverified object.
 
-## 21. Blocking decisions for reviewers
+### Step 6: subscription UI/API — 1 to 1.5 days
 
-1. **Worker platform:** Which service will run the Python/native-FFmpeg worker, with what memory, CPU,
-   concurrency, timeout, and deployment model?
-2. **Recipe default:** Is V1 score-first selection with chronological playback acceptable, and what
-   target duration should be the default?
-3. **Source entitlement:** Are public RSS enclosures the only supported source class for V1?
-4. **Retention:** How long should transcripts, source metadata, failed temporary objects, and rendered
-   outputs be retained?
-5. **Quotas/business model:** Who may enable automatic subscriptions, and what usage limits apply?
-6. **Publication latency:** Is daily discovery sufficient, or should paid users eventually receive more
-   frequent polling?
-7. **Content policy:** Should automatic edits exclude advertisements using only model judgment, or is a
-   dedicated detection policy required?
+- Add subscription CRUD and status/history UI.
+- Add pause and retry eligibility.
+- Enforce quotas and future-only default.
 
-## 22. Recommended decisions
+Exit: a signed-in user can subscribe and understand every terminal/error state.
 
-- Start with one small always-on worker process and concurrency `1`; scale horizontally only after
-  measuring FFmpeg memory and CPU.
-- Use Supabase Cron once daily for discovery and Postgres leases for durable work.
-- Make automatic subscriptions opt-in and future-only.
-- Default to 30 minutes, score 7+, all topics, and a 0.5-second pause.
-- Keep shared analysis immutable by prompt version and subscriber recipes immutable by policy version.
-- Do not add generated voice until unattended rendering is reliable and editorial quality is measured.
-- Move from Postgres queueing to a managed queue only when operational evidence justifies the added
-  infrastructure.
+### Step 7: invited beta — two weeks elapsed
 
-## 23. Review checklist
+- Run for the owner plus five invited users.
+- Review stuck-work SQL and provider dashboards daily for the first week.
+- Fix repeated failure classes; do not add infrastructure for one-off failures.
 
-Reviewers should specifically challenge:
+Exit: automatic editing works for two weeks without manual intervention, produces no duplicate RSS
+items, and never publishes an unverifiable enclosure.
 
-- Whether the identity and idempotency keys handle real-world feed mutation.
-- Whether Postgres queueing is sufficient for the expected first-year load.
-- Whether the worker permission model is narrow enough.
-- Whether publication can occur under any partial or stale state.
-- Whether the selection policy produces coherent episodes without human review.
-- Whether quotas bound worst-case provider and storage cost.
-- Whether the proposed metrics make silent failure visible.
-- Which assumptions would force an architectural change rather than a configuration change.
+## 16. V1 acceptance criteria
+
+- One daily Modal schedule polls every distinct active source feed at most once per run.
+- Duplicate schedule execution creates no duplicate source episode, delivery, object, or RSS item.
+- Multiple subscribers share one current-version transcript/highlight artifact set.
+- Automatic selection preserves complete highlights and final chronological order.
+- A function retry resumes from persisted provider/artifact state.
+- Failed rendering, upload, or verification publishes no RSS item.
+- Podcast clients can follow the application enclosure URL through a fresh signed R2 redirect.
+- Paused subscriptions create no future deliveries.
+- Hard caps stop or defer expensive work before provider submission.
+- The owner and five invited users operate for two weeks without manual pipeline intervention.
+
+## 17. Decisions now resolved
+
+- **Compute:** Modal serverless functions and one daily Modal schedule.
+- **Published storage:** private Cloudflare R2 with signed redirects.
+- **Database:** Supabase Postgres, used for durable state—not as a queue.
+- **Transcription:** AssemblyAI for V1; evaluate faster-whisper on Modal only after measuring economics.
+- **Recipe:** score-first selection, chronological playback, default 30 minutes.
+- **Sources:** public RSS enclosures only.
+- **Polling:** daily only.
+- **Transitions:** silent, default 0.5 seconds.
+- **Ads:** Claude best-effort exclusion only.
+- **Retention:** MP3/RSS 90 days, temp objects 48 hours, analysis artifacts pending legal decision.
+- **Re-analysis:** retain version columns, build no version-bump workflow.
+
+## 18. Remaining reviewer questions
+
+1. Is the private personal-use beta posture acceptable pending formal public-launch legal review?
+2. Does deleting both MP3 and RSS item after 90 days match the expected listener experience?
+3. Are Modal Starter's one-day logs sufficient, or should errors be copied into a stable database field
+   with slightly more detail?
+4. Does waiting inside Modal for AssemblyAI remain cheaper/simpler than provider webhook plumbing at
+   observed episode durations?
+5. Is accepting rare duplicate render compute—while guaranteeing one publication—the right beta
+   trade-off?
+6. Do the initial five-container cap and daily source-minute cap provide adequate spend protection?
+7. Does R2 signed-URL redirect behavior work reliably in every target podcast client?
+
+## 19. Explicit triggers to revisit the architecture
+
+Add more infrastructure only when one of these occurs:
+
+- More than 100 automatic deliveries/day or sustained Modal concurrency pressure.
+- Duplicate compute becomes a meaningful portion of spend.
+- Daily reconciliation leaves work stuck or retries too slowly.
+- AssemblyAI waiting materially consumes the compute credit.
+- Beta support cannot be handled from status/error fields and Modal logs.
+- R2 signing redirects fail in a meaningful podcast client.
+- A compliance requirement demands longer audit logs or a formal event trail.
+
+At that point evaluate provider webhooks, a durable managed workflow/queue, richer observability, and
+GPU transcription. None is required to validate the current product hypothesis.

@@ -16,7 +16,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .auth import current_user, optional_current_user, personal_feed_token
+from .auth import current_user, optional_current_user, personal_feed_token_for_user
 from .jobs import JobStore, new_job_id, validate_job_id
 from .email_delivery import send_private_feed_email
 from .pipeline.no_worker import advance_no_worker_job, submit_no_worker_job
@@ -629,7 +629,7 @@ def add_job_to_private_feed(
     )
     title = str(input_payload.get("episode_title") or "Edited episode")
     user = optional_current_user(request, settings)
-    token = personal_feed_token(user["id"], settings) if user else payload.token
+    token = personal_feed_token_for_user(user, settings) if user else payload.token
     store.add_private_feed_item(token, job_id, title, size_bytes, user["id"] if user else None)
     return JSONResponse({"ok": True, "feed_url": f"/private-feed/{token}.xml"})
 
@@ -649,7 +649,7 @@ def email_private_feed(job_id: str, request: Request) -> JSONResponse:
     if status.status != JobStatus.done:
         raise HTTPException(status_code=409, detail="edited episode is not ready")
 
-    token = personal_feed_token(user["id"], settings)
+    token = personal_feed_token_for_user(user, settings)
     input_payload = store.read_json(job_id, "input") or {}
     job_record = store.get_job_record(job_id) or {}
     output = store.artifact_path(job_id, "output")
@@ -669,7 +669,7 @@ def email_private_feed(job_id: str, request: Request) -> JSONResponse:
 @app.get("/me")
 def me(request: Request) -> JSONResponse:
     user = current_user(request, settings)
-    token = personal_feed_token(user["id"], settings)
+    token = personal_feed_token_for_user(user, settings)
     return JSONResponse(
         {
             "user": {"id": user["id"], "name": user.get("name"), "email": user.get("email")},
@@ -682,7 +682,7 @@ def me(request: Request) -> JSONResponse:
 @app.post("/me/claim-anonymous-feed")
 def claim_anonymous_feed(payload: ClaimAnonymousFeedRequest, request: Request) -> JSONResponse:
     user = current_user(request, settings)
-    account_token = personal_feed_token(str(user["id"]), settings)
+    account_token = personal_feed_token_for_user(user, settings)
     claimed = store.claim_private_feed(payload.token, account_token, str(user["id"]))
     return JSONResponse(
         {
