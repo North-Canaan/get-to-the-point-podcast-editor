@@ -116,6 +116,12 @@ def public_http_request(
             )
             response = client.send(request, stream=True)
             try:
+                if response.status_code == 304:
+                    return httpx.Response(
+                        response.status_code,
+                        headers=response.headers,
+                        request=response.request,
+                    )
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:

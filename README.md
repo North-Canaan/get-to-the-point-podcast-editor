@@ -115,3 +115,18 @@ python -m podcast_editor.worker run
 
 That path uses WhisperX/pyannote/native ffmpeg and is not required for the current no-owned-worker
 architecture.
+
+## Automatic Feed Backend
+
+Apply `supabase/migrations/0012_automatic_feed_backend.sql`, create a private R2 Standard bucket with
+a 48-hour lifecycle rule for `temporary/` objects, and create a Modal secret named
+`get-to-the-point-automatic` containing the Supabase, AssemblyAI, Anthropic, Better Auth, and R2
+variables shown in `.env.example`. Deploy the scheduled backend with:
+
+```bash
+modal deploy modal_app.py
+```
+
+Keep `AUTOMATIC_PROCESSING_ENABLED=false` until the migration, R2 HEAD/Range redirect smoke test, and
+legal beta posture are complete. The initial `AUTOMATIC_GLOBAL_SOURCE_MINUTES_PER_DAY=240` setting is
+the global spend guard; raise it only after reviewing provider usage.

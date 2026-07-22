@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "anthropic>=0.117.0",
+  "boto3>=1.35.0",
   "fastapi>=0.117.1",
   "feedparser>=6.0.11",
   "httpx>=0.28.1",
@@ -22,7 +23,12 @@ dev = [
   "ruff>=0.14.0",
 ]
 worker = [
+  "modal>=1.1.0",
   "whisperx>=3.4.2",
+]
+
+automatic = [
+  "modal>=1.1.0",
 ]
 
 [project.scripts]

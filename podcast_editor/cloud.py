@@ -91,7 +91,8 @@ class SupabaseClient:
         with httpx.Client(timeout=20.0) as client:
             response = client.get(
                 f"{self.url}/rest/v1/jobs?user_id=eq.{encoded_user}"
-                "&select=id,status,source_url,episode_title,created_at,updated_at,output_size_bytes"
+                "&select=id,status,source_url,episode_title,created_at,updated_at,output_size_bytes,"
+                "subscription_deliveries(id,status,last_error_code)"
                 "&order=created_at.desc&limit=100",
                 headers=self.headers,
             )
@@ -394,6 +395,96 @@ class SupabaseClient:
             )
             response.raise_for_status()
             return int(response.json() or 0)
+
+    def create_subscription(
+        self, user_id: str, normalized_url: str, title: str, recipe: dict[str, Any]
+    ) -> dict[str, Any]:
+        headers = {
+            **self.headers,
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=representation",
+        }
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{self.url}/rest/v1/source_feeds?on_conflict=normalized_url",
+                headers=headers,
+                json={"normalized_url": normalized_url, "title": title},
+            )
+            response.raise_for_status()
+            rows = response.json()
+            if not rows:
+                response = client.get(
+                    f"{self.url}/rest/v1/source_feeds"
+                    f"?normalized_url=eq.{quote(normalized_url, safe='')}&select=id",
+                    headers=self.headers,
+                )
+                response.raise_for_status()
+                rows = response.json()
+            feed_id = rows[0]["id"]
+            response = client.post(
+                f"{self.url}/rest/v1/feed_subscriptions",
+                headers={**self.headers, "Content-Type": "application/json", "Prefer": "return=representation"},
+                json={
+                    "user_id": user_id,
+                    "source_feed_id": feed_id,
+                    "recipe_json": recipe,
+                },
+            )
+            if response.status_code == 409:
+                raise ValueError("You already subscribe to this podcast")
+            response.raise_for_status()
+            return response.json()[0]
+
+    def list_subscriptions(self, user_id: str) -> list[dict[str, Any]]:
+        endpoint = (
+            f"{self.url}/rest/v1/feed_subscriptions?user_id=eq.{quote(user_id, safe='')}"
+            "&status=neq.deleted"
+            "&select=id,status,recipe_json,start_after,created_at,source_feeds(normalized_url,title)"
+            "&order=created_at.desc"
+        )
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(endpoint, headers=self.headers)
+            response.raise_for_status()
+            return response.json()
+
+    def update_subscription(
+        self, subscription_id: str, user_id: str, fields: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        headers = {
+            **self.headers,
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        endpoint = (
+            f"{self.url}/rest/v1/feed_subscriptions?id=eq.{quote(subscription_id, safe='')}"
+            f"&user_id=eq.{quote(user_id, safe='')}"
+        )
+        with httpx.Client(timeout=20.0) as client:
+            response = client.patch(endpoint, headers=headers, json=fields)
+            response.raise_for_status()
+            rows = response.json()
+            return rows[0] if rows else None
+
+    def get_automatic_output(self, job_id: str) -> dict[str, Any] | None:
+        endpoint = (
+            f"{self.url}/rest/v1/subscription_deliveries?job_id=eq.{quote(job_id, safe='')}"
+            "&status=eq.published&select=r2_object_key,output_size_bytes"
+        )
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(endpoint, headers=self.headers)
+            response.raise_for_status()
+            rows = response.json()
+            return rows[0] if rows else None
+
+    def retry_automatic_delivery(self, job_id: str, user_id: str) -> bool:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{self.url}/rest/v1/rpc/retry_automatic_delivery",
+                headers={**self.headers, "Content-Type": "application/json"},
+                json={"target_job_id": job_id, "target_user_id": user_id},
+            )
+            response.raise_for_status()
+            return bool(response.json())
 
 
 def storage_object_not_found(response: httpx.Response) -> bool:

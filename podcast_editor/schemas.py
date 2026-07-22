@@ -55,6 +55,42 @@ class FeedLibraryResponse(BaseModel):
     feeds: list[SavedFeed]
 
 
+class AutomaticRecipe(BaseModel):
+    target_minutes: Literal[15, 30, 45, 60] = 30
+    topics: list[str] = Field(default_factory=list, max_length=100)
+    minimum_score: int = Field(default=7, ge=1, le=10)
+    transition_seconds: Literal[0, 0.5, 1] = 0.5
+    start_policy: Literal["future_only", "newest_once"] = "future_only"
+
+    @field_validator("topics")
+    @classmethod
+    def valid_topics(cls, value: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(topic.strip() for topic in value if topic.strip()))
+        if any(len(topic) > 160 for topic in normalized):
+            raise ValueError("topics must be at most 160 characters")
+        return normalized
+
+
+class CreateSubscriptionRequest(BaseModel):
+    feed_url: str = Field(min_length=8, max_length=2048)
+    recipe: AutomaticRecipe = Field(default_factory=AutomaticRecipe)
+
+
+class UpdateSubscriptionRequest(BaseModel):
+    status: Literal["active", "paused", "deleted"] | None = None
+    recipe: AutomaticRecipe | None = None
+
+
+class SubscriptionResponse(BaseModel):
+    id: str
+    status: str
+    feed_url: str
+    feed_title: str | None = None
+    recipe: AutomaticRecipe
+    start_after: str
+    created_at: str
+
+
 class StatusRecord(BaseModel):
     job_id: str
     status: JobStatus

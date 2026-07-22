@@ -25,6 +25,22 @@ def test_job_store_status_round_trip(tmp_path: Path) -> None:
     assert store.get_status(job_id).status == JobStatus.transcribing
 
 
+def test_job_store_falls_back_to_database_status_when_artifact_is_missing(tmp_path: Path) -> None:
+    store = JobStore(Settings(data_dir=tmp_path, state_backend="filesystem"))
+    job_id = new_job_id()
+
+    class Cloud:
+        def download_json_artifact(self, _job_id: str, _name: str):
+            return None
+
+        def get_job(self, _job_id: str):
+            return {"status": "done", "error": None}
+
+    store.cloud = Cloud()
+
+    assert store.get_status(job_id).status == JobStatus.done
+
+
 def test_feed_library_upserts_and_searches(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path, state_backend="filesystem")
     store = JobStore(settings)

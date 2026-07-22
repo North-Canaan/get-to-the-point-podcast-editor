@@ -27,6 +27,7 @@ from .email_delivery import send_private_feed_email
 from .pipeline.no_worker import advance_no_worker_job, submit_no_worker_job
 from .pipeline.ingest import IngestError, list_feed_episodes
 from .schemas import (
+    CreateSubscriptionRequest,
     CreateJobRequest,
     CreateJobResponse,
     ClaimAnonymousFeedRequest,
@@ -39,7 +40,11 @@ from .schemas import (
     PrivateFeedRequest,
     ReviewRequest,
     StateResponse,
+    SubscriptionResponse,
+    UpdateSubscriptionRequest,
 )
+from .automatic import Recipe, normalize_url
+from .r2 import R2Client
 from .security import (
     SECURITY_HEADERS,
     client_rate_key,
@@ -69,9 +74,11 @@ RATE_RULES = (
         30,
     ),
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/advance$"), 60, 30),
+    ("POST", re.compile(r"^/jobs/[0-9a-f-]+/automatic-retry$"), 3600, 5),
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/(?:review|edits|private-feed)$"), 3600, 30),
     ("POST", re.compile(r"^/jobs/[0-9a-f-]+/private-feed/email$"), 3600, 3),
     ("POST", re.compile(r"^/me/claim-anonymous-feed$"), 3600, 10),
+    ("POST", re.compile(r"^/me/subscriptions$"), 3600, 10),
     ("GET", re.compile(r"^/jobs/[0-9a-f-]+/state$"), 60, 30),
 )
 
@@ -268,6 +275,73 @@ def feeds(query: str = Query(default="", max_length=100)) -> FeedLibraryResponse
     return FeedLibraryResponse(feeds=store.list_feeds(query))
 
 
+def _subscription_response(row: dict) -> SubscriptionResponse:
+    feed = row.get("source_feeds") or {}
+    return SubscriptionResponse(
+        id=str(row["id"]),
+        status=str(row["status"]),
+        feed_url=str(feed.get("normalized_url") or row.get("feed_url") or ""),
+        feed_title=feed.get("title") or row.get("feed_title"),
+        recipe=row.get("recipe_json") or row.get("recipe") or {},
+        start_after=str(row["start_after"]),
+        created_at=str(row["created_at"]),
+    )
+
+
+@app.get("/me/subscriptions", response_model=list[SubscriptionResponse])
+def list_my_subscriptions(request: Request) -> list[SubscriptionResponse]:
+    user = current_user(request, settings)
+    return [_subscription_response(row) for row in store.list_subscriptions(str(user["id"]))]
+
+
+@app.post("/me/subscriptions", response_model=SubscriptionResponse, status_code=201)
+def create_subscription(payload: CreateSubscriptionRequest, request: Request) -> SubscriptionResponse:
+    user = current_user(request, settings)
+    validate_public_http_url(payload.feed_url)
+    existing = store.list_subscriptions(str(user["id"]))
+    if len(existing) >= settings.automatic_max_subscriptions_per_user:
+        raise HTTPException(status_code=409, detail="active subscription limit reached")
+    try:
+        feed = list_feed_episodes(payload.feed_url)
+        recipe = Recipe.from_dict(payload.recipe.model_dump()).as_dict()
+        row = store.create_subscription(
+            str(user["id"]), normalize_url(payload.feed_url), str(feed["title"]), recipe
+        )
+    except IngestError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _subscription_response({**row, "feed_url": normalize_url(payload.feed_url), "feed_title": feed["title"]})
+
+
+@app.patch("/me/subscriptions/{subscription_id}", response_model=SubscriptionResponse)
+def update_subscription(
+    subscription_id: str, payload: UpdateSubscriptionRequest, request: Request
+) -> SubscriptionResponse:
+    user = current_user(request, settings)
+    try:
+        validate_job_id(subscription_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="subscription not found") from None
+    fields: dict = {}
+    if payload.status is not None:
+        fields["status"] = payload.status
+    if payload.recipe is not None:
+        fields["recipe_json"] = Recipe.from_dict(payload.recipe.model_dump()).as_dict()
+    if not fields:
+        raise HTTPException(status_code=422, detail="no subscription changes supplied")
+    row = store.update_subscription(subscription_id, str(user["id"]), fields)
+    if not row:
+        raise HTTPException(status_code=404, detail="subscription not found")
+    matching = next(
+        (item for item in store.list_subscriptions(str(user["id"])) if str(item["id"]) == subscription_id),
+        None,
+    )
+    if not matching and payload.status == "deleted":
+        return _subscription_response({**row, "feed_url": "", "feed_title": None})
+    return _subscription_response(matching or row)
+
+
 @app.get("/jobs/{job_id}/state", response_model=StateResponse)
 def job_state(job_id: str, request: Request) -> StateResponse:
     try:
@@ -321,10 +395,22 @@ def job_state(job_id: str, request: Request) -> StateResponse:
         created_at=job_record.get("created_at"),
         status_updated_at=job_record.get("updated_at"),
         email_delivery_available=bool(settings.resend_api_key),
-        episode_title=input_payload.get("episode_title"),
+        episode_title=input_payload.get("episode_title") or job_record.get("episode_title"),
         transcript=transcript,
         highlights=highlights,
     )
+
+
+@app.post("/jobs/{job_id}/automatic-retry")
+def retry_automatic_job(job_id: str, request: Request) -> JSONResponse:
+    try:
+        validate_job_id(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="automatic delivery not found") from None
+    user = current_user(request, settings)
+    if not store.retry_automatic_delivery(job_id, str(user["id"])):
+        raise HTTPException(status_code=409, detail="automatic delivery is not retryable")
+    return JSONResponse({"ok": True, "retry": "next_daily_schedule"})
 
 
 def job_status_is_stale(updated_at: object, minutes: int) -> bool:
@@ -769,6 +855,17 @@ def private_feed_episode_head(token: str, job_id: str) -> Response:
 def _job_output_response(job_id: str, head_only: bool = False) -> Response:
     output = store.artifact_path(job_id, "output")
     if not output.exists():
+        automatic_output = store.get_automatic_output(job_id)
+        if automatic_output and automatic_output.get("r2_object_key"):
+            r2 = R2Client.from_settings(settings)
+            if not r2:
+                raise HTTPException(status_code=503, detail="enclosure storage is unavailable")
+            operation = "head_object" if head_only else "get_object"
+            return RedirectResponse(
+                r2.signed_url(str(automatic_output["r2_object_key"]), operation),
+                status_code=307,
+                headers={"Cache-Control": "private, no-store"},
+            )
         signed_url = store.signed_media_url(job_id, "output.mp3")
         if signed_url:
             return RedirectResponse(signed_url, headers={"Content-Type": "audio/mpeg"})

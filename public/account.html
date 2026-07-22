@@ -6,6 +6,17 @@
     <main class="section-inner account-shell">
       <h1>My episodes</h1><p id="account-name"></p>
       <section class="card"><h2>Personal podcast feed</h2><p>Your completed edits appear in this private feed.</p><div class="feed-copy-row"><input id="account-feed" readonly /><button class="button secondary" id="copy-account-feed">Copy feed URL</button></div></section>
+      <section class="card">
+        <h2>Automatic podcast subscriptions</h2>
+        <p>New episodes will be edited once daily and added to your personal feed.</p>
+        <form id="subscription-form" class="subscription-form">
+          <label>Podcast RSS URL <input id="subscription-url" type="url" required maxlength="2048" placeholder="https://example.com/feed.xml" /></label>
+          <label>Target length <select id="subscription-target"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="45">45 minutes</option><option value="60">60 minutes</option></select></label>
+          <label>Minimum score <select id="subscription-score"><option>6</option><option selected>7</option><option>8</option><option>9</option></select></label>
+          <button class="button" type="submit">Subscribe</button><span id="subscription-message" role="status"></span>
+        </form>
+        <div id="subscriptions"><p>Loading subscriptions…</p></div>
+      </section>
       <section class="account-history"><div class="account-section-heading"><h2>Episode history</h2><span id="episode-count" hidden></span></div><div class="account-episode-list" id="account-jobs"><p>Loading your episodes…</p></div></section>
     </main>
     <script type="module">
@@ -45,12 +56,44 @@
           const actions = document.createElement("div"); actions.className = "account-episode-actions";
           const detail = document.createElement("span"); detail.className = `episode-status status-${job.status}`; detail.textContent = job.status === "done" ? "Ready" : job.status.replaceAll("_", " ");
           const open = document.createElement("a"); open.className = "compact-open"; open.href = `/review.html?job_id=${job.id}`; open.textContent = "Open"; open.setAttribute("aria-label", `Open ${title.textContent}`);
-          actions.append(detail, open);
+          const automatic = job.subscription_deliveries?.[0];
+          if (job.status === "error" && automatic?.status === "failed") {
+            const retry = document.createElement("button"); retry.className = "compact-open"; retry.type = "button"; retry.textContent = "Retry";
+            retry.addEventListener("click", async () => { const response = await fetch(`/jobs/${job.id}/automatic-retry`, { method: "POST" }); if (response.ok) location.reload(); });
+            actions.append(detail, retry);
+          } else actions.append(detail, open);
           item.append(copy, actions);
           jobs.append(item);
         }
       }
       document.querySelector("#copy-account-feed").addEventListener("click", () => navigator.clipboard.writeText(document.querySelector("#account-feed").value));
+      const subscriptions = document.querySelector("#subscriptions");
+      async function loadSubscriptions() {
+        const response = await fetch("/me/subscriptions");
+        if (!response.ok) { subscriptions.textContent = "Could not load subscriptions."; return; }
+        const rows = await response.json(); subscriptions.replaceChildren();
+        if (!rows.length) { const empty = document.createElement("p"); empty.textContent = "No automatic subscriptions yet."; subscriptions.append(empty); return; }
+        for (const row of rows) {
+          const item = document.createElement("article"); item.className = "account-episode-row";
+          const copy = document.createElement("div"); copy.className = "account-episode-copy";
+          const title = document.createElement("h3"); title.textContent = row.feed_title || row.feed_url;
+          const detail = document.createElement("small"); detail.textContent = `${row.recipe.target_minutes} minutes · score ${row.recipe.minimum_score}+`;
+          copy.append(title, detail);
+          const actions = document.createElement("div"); actions.className = "account-episode-actions";
+          const toggle = document.createElement("button"); toggle.className = "button secondary"; toggle.type = "button"; toggle.textContent = row.status === "active" ? "Pause" : "Resume";
+          toggle.addEventListener("click", async () => { await fetch(`/me/subscriptions/${row.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: row.status === "active" ? "paused" : "active" }) }); await loadSubscriptions(); });
+          const remove = document.createElement("button"); remove.className = "link-button"; remove.type = "button"; remove.textContent = "Delete";
+          remove.addEventListener("click", async () => { await fetch(`/me/subscriptions/${row.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "deleted" }) }); await loadSubscriptions(); });
+          actions.append(toggle, remove); item.append(copy, actions); subscriptions.append(item);
+        }
+      }
+      document.querySelector("#subscription-form").addEventListener("submit", async (event) => {
+        event.preventDefault(); const message = document.querySelector("#subscription-message"); message.textContent = "Subscribing…";
+        const response = await fetch("/me/subscriptions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ feed_url: document.querySelector("#subscription-url").value, recipe: { target_minutes: Number(document.querySelector("#subscription-target").value), minimum_score: Number(document.querySelector("#subscription-score").value) } }) });
+        if (response.ok) { event.target.reset(); message.textContent = "Subscribed."; await loadSubscriptions(); }
+        else { const error = await response.json().catch(() => ({})); message.textContent = error.detail || "Could not subscribe."; }
+      });
+      await loadSubscriptions();
       document.querySelector("#sign-out").addEventListener("click", async () => { await fetch("/api/auth/sign-out", { method: "POST" }); location.href = "/"; });
     </script>
   </body>

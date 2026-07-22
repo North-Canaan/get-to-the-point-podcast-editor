@@ -161,9 +161,39 @@ class JobStore:
     def list_user_jobs(self, user_id: str) -> list[dict]:
         return self.cloud.list_user_jobs(user_id) if self.cloud else []
 
+    def create_subscription(
+        self, user_id: str, normalized_url: str, title: str, recipe: dict
+    ) -> dict:
+        if not self.cloud:
+            raise RuntimeError("automatic subscriptions require Supabase")
+        return self.cloud.create_subscription(user_id, normalized_url, title, recipe)
+
+    def list_subscriptions(self, user_id: str) -> list[dict]:
+        return self.cloud.list_subscriptions(user_id) if self.cloud else []
+
+    def update_subscription(self, subscription_id: str, user_id: str, fields: dict) -> dict | None:
+        if not self.cloud:
+            raise RuntimeError("automatic subscriptions require Supabase")
+        return self.cloud.update_subscription(subscription_id, user_id, fields)
+
+    def get_automatic_output(self, job_id: str) -> dict | None:
+        return self.cloud.get_automatic_output(job_id) if self.cloud else None
+
+    def retry_automatic_delivery(self, job_id: str, user_id: str) -> bool:
+        return bool(self.cloud and self.cloud.retry_automatic_delivery(job_id, user_id))
+
     def get_status(self, job_id: str) -> StatusRecord:
         payload = self.read_json(job_id, "status")
         if not payload:
+            if self.cloud and (job := self.cloud.get_job(job_id)):
+                try:
+                    return StatusRecord(
+                        job_id=job_id,
+                        status=JobStatus(str(job["status"])),
+                        error=job.get("error"),
+                    )
+                except (KeyError, ValueError):
+                    pass
             return StatusRecord(job_id=job_id, status=JobStatus.queued)
         return StatusRecord.model_validate(payload)
 

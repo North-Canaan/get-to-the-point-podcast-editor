@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     trusted_origins: str = "http://localhost:8000,https://get-to-the-point-podcast-editor.vercel.app"
     rate_limit_salt: str | None = None
     max_output_bytes: int = 1_000_000_000
+    r2_endpoint_url: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str = "podcast-enclosures"
+    automatic_processing_enabled: bool = False
+    automatic_max_subscriptions_per_user: int = 5
+    automatic_global_source_minutes_per_day: int = 240
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
