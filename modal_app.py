@@ -34,7 +34,7 @@ from podcast_editor.automatic import (
     select_highlights,
     source_episode_identity,
 )
-from podcast_editor.cloud import SupabaseClient
+from podcast_editor.cloud import SupabaseClient, storage_object_not_found
 from podcast_editor.config import Settings
 from podcast_editor.jobs import JobStore
 from podcast_editor.pipeline.highlights import (
@@ -142,7 +142,7 @@ def download_json(db: SupabaseClient, object_path: str) -> dict[str, Any] | None
         response = client.get(
             f"{db.url}/storage/v1/object/{db.bucket}/{object_path}", headers=db.headers
         )
-        if response.status_code == 404:
+        if storage_object_not_found(response):
             return None
         response.raise_for_status()
         return response.json()
@@ -194,7 +194,8 @@ def entry_published_at(entry: Any) -> str | None:
 def record_failure(kind: str, maximum_attempts: int):
     def decorate(function):
         @wraps(function)
-        def wrapped(identifier: str):
+        def wrapped(*args, **kwargs):
+            identifier = args[0] if args else next(iter(kwargs.values()))
             try:
                 return function(identifier)
             except Exception as exc:
